@@ -35,3 +35,6 @@ datos_prueba_diagnostico_consolidado <- datos_prueba_diagnostico |>
   }
   ) |> 
   list_rbind()
+
+datos_prueba_diagnostico_consolidado |> 
+  write_parquet(file.path(dir_salida, 'consolidado_pruebas_diagnostico.parquet'))

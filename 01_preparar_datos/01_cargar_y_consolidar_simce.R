@@ -33,9 +33,12 @@ leer_simce <- function(archivo_zip, nombre_zip) {
   
   data <- tryCatch({    
     # Leer con read_delim
-    archivo <- read_csv(unz(description = archivo_zip, filename = archivo_a_cargar))
-    if (ncol(archivo) == 1) archivo <- read_csv2(unz(description = archivo_zip, filename = archivo_a_cargar)) 
-    if (ncol(archivo) == 1) archivo <- read_delim(unz(description = archivo_zip, filename = archivo_a_cargar), delim = '|') 
+    archivo <- read_csv(unz(description = archivo_zip, filename = archivo_a_cargar), 
+                        locale = locale(encoding = "Latin1"))
+    if (ncol(archivo) == 1) archivo <- read_csv2(unz(description = archivo_zip, filename = archivo_a_cargar), 
+                                                 locale = locale(encoding = "Latin1")) 
+    if (ncol(archivo) == 1) archivo <- read_delim(unz(description = archivo_zip, filename = archivo_a_cargar), 
+                                                  delim = '|', locale = locale(encoding = "Latin1")) 
     if (ncol(archivo) == 1) errorCondition()
     
     return(archivo)
@@ -52,7 +55,8 @@ leer_simce <- function(archivo_zip, nombre_zip) {
       archivo <- read_delim(unz(description = archivo_zip,
                                 filename = archivo_a_cargar),
                             delim = '|',
-                            skip = 1)
+                            skip = 1, 
+                            locale = locale(encoding = "Latin1"))
       names(archivo) <- nombres_variables_limpias
       
       archivo
@@ -83,7 +87,7 @@ datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |>
   list_rbind()
   
 datos_simce_alu_mrun_consolidado |> 
-  write_parquet(file.path(dir_salida, 'datos_simce_alu_consolidado.parquet'))
+  write_parquet(file.path(dir_salida, 'consolidado_datos_simce_alu.parquet'))
 
 ## SIMCE por colegio: ----
 datos_simce_rbd <- ruta_archivos_brutos_simce |> 
@@ -93,7 +97,7 @@ datos_simce_rbd_consolidado <- datos_simce_rbd |>
   map(~{
     # Homologar nombres y tipos de datos:
     data_vars_seleccionadas <- .x |>
-        select(agno, grado, rbd, dvrbd, cod_com_rbd,
+        select(agno, grado, rbd, dvrbd, nom_rbd, cod_com_rbd, nom_com_rbd,
                cod_depe1, cod_depe2, cod_grupo, cod_rural_rbd,
                starts_with(c('nalu_lect', 'nalu_mate',
                              'prom_lect', 'prom_mate',
@@ -110,4 +114,4 @@ datos_simce_rbd_consolidado <- datos_simce_rbd |>
   list_rbind()
   
 datos_simce_rbd_consolidado |> 
-  write_parquet(file.path(dir_salida, 'datos_simce_rbd_consolidado.parquet'))
+  write_parquet(file.path(dir_salida, 'consolidado_datos_simce_rbd.parquet'))
