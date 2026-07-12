@@ -1,0 +1,13 @@
+default:
+  ruta_data_in: "C:/Users/Usuario/OneDrive/modelo-simce/data_in"
+  ruta_data_intermedia: "C:/Users/Usuario/OneDrive/modelo-simce/data_intermedia"
+  ruta_outputs: "C:/Users/Usuario/OneDrive/modelo-simce/outputs"
+
+edgardo_personal:
+  ruta_data_in: "C:/Users/Usuario/OneDrive/modelo-simce/data_in"
+  ruta_data_intermedia: "C:/Users/Usuario/OneDrive/modelo-simce/data_intermedia"
+  ruta_outputs: "C:/Users/Usuario/OneDrive/modelo-simce/outputs"
+
+abel:
+  ruta_data_in: "RELLENAR"
+  ruta_outputs: "RELLENAR"
