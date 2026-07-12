@@ -1,3 +1,6 @@
+# Script para cargar y consolidar los resultados de pruebas SIMCE ####
+# A nivel de estudiante y de colegio
+
 library(tidyverse)
 library(arrow)
 
@@ -5,7 +8,6 @@ library(arrow)
 rutas <- config::get(file = "config.yml")
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
-ruta_outputs <- rutas$ruta_outputs
 
 # Especificar dónde se van a guardar las salidas
 dir_salida <- ruta_data_intermedia |> file.path('simce')
@@ -19,8 +21,6 @@ ruta_archivos_brutos_simce <- ruta_data_in |>
 
 
 # Cargar y leer los archivos, para después consolidarlos: ----
-
-
 leer_simce <- function(archivo_zip, nombre_zip) {
   
   # Identificar archivos dentro del zip según patrón del nombre:
