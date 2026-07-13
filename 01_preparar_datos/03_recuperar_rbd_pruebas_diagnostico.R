@@ -3,11 +3,14 @@
 # =============================================================================
 
 library(readxl)
+library(arrow)
 library(dplyr)
 library(stringr)
 library(stringi)
 library(stringdist)
 library(writexl)
+
+UMBRAL_ACEPTACION <- 95   # % de similitud mínimo para aceptar un match por nombre
 
 # -----------------------------------------------------------------------------
 # 0. RUTAS
@@ -35,13 +38,12 @@ rbd_ref <- read_parquet(archivo_simces) |>
     rbd         = as.integer(rbd),
     dvrbd       = as.character(dvrbd),
     nom_simce = stri_trans_general(toupper(nom_rbd), "Latin-ASCII"),
-    nom_com_rbd = stri_trans_general(toupper(nom_com_rbd), "Latin-ASCII")
+    comuna_std = stri_trans_general(toupper(nom_com_rbd), "Latin-ASCII")
   ) |> 
-  distinct(rbd, dvrbd, nom_simce, nom_com_rbd) |> 
+  distinct(rbd, dvrbd, nom_simce, comuna_std) |> 
   distinct(rbd, .keep_all = TRUE)
 
 rbd_validos <- rbd_ref$rbd
-
 # -----------------------------------------------------------------------------
 # 2. DÍGITO VERIFICADOR DE RBD (mismo algoritmo módulo 11 que el RUT chileno)
 # -----------------------------------------------------------------------------
@@ -61,14 +63,6 @@ dv_rbd <- function(rbd) {
 #      - Si el nombre trae el patrón "RBD-DV" (ej. "1393-5"), se interpreta
 #        como RBD + dígito verificador y se valida con dv_rbd().
 # -----------------------------------------------------------------------------
-colegios_por_rbd <- ensayo_simce |> 
-  mutate(rbd_candidato = extraer_rbd_candidatos(colegio),
-         rbd_candidato = as.integer(rbd_candidato)) |> 
-  left_join(rbd_ref, by = c('rbd_candidato' = 'rbd')) |> 
-  filter(!is.na(nom_simce)) |> 
-  mutate(dist = stringdist(limpiar_nombre(colegio),
-                           limpiar_nombre(nom_simce), method = "jw", p = 0.1))
-
 extraer_candidatos <- function(nombre) {
   s <- str_remove(nombre, "^\\(\\s*20\\d{2}\\s*\\)")
   
@@ -96,7 +90,7 @@ detectar_rbd_dv <- function(nombre) {
 # -----------------------------------------------------------------------------
 # 4. EXTRACCIÓN POR COINCIDENCIA APROXIMADA (fallback cuando el nombre no
 #    trae ningún RBD). Se compara el nombre "limpio" del colegio contra
-#    nom_rbd del listado de referencia, usando similitud Jaro-Winkler y,
+#    comuna_std del listado de referencia, usando similitud Jaro-Winkler y,
 #    si es posible, la comuna mencionada entre paréntesis como filtro.
 #
 #    OJO: simce2m2025_rbd_preliminar.xlsx es el listado de 2° medio 2025.
@@ -130,7 +124,7 @@ buscar_por_nombre <- function(nombre) {
   
   candidatos <- rbd_ref
   if (!is.na(comuna_hint)) {
-    filtrado <- candidatos %>% filter(str_detect(nom_com_rbd, fixed(comuna_hint)))
+    filtrado <- candidatos %>% filter(str_detect(comuna_std, fixed(comuna_hint)))
     if (nrow(filtrado) > 0) candidatos <- filtrado
   }
   
@@ -140,24 +134,25 @@ buscar_por_nombre <- function(nombre) {
   list(
     rbd_sugerido  = candidatos$rbd[best],
     nombre_simce  = candidatos$nom_simce[best],
-    comuna_simce  = candidatos$nom_com_rbd[best],
+    comuna_simce  = candidatos$comuna_std[best],
     similitud     = round(sims[best] * 100, 1)
   )
 }
-
-UMBRAL_ACEPTACION <- 85   # % de similitud mínimo para aceptar un match por nombre
 
 # -----------------------------------------------------------------------------
 # 5. PROCESAMIENTO PRINCIPAL
 # -----------------------------------------------------------------------------
 procesar_colegio <- function(nombre) {
   
-  cat("Procesando", nombre, '\n')
+  cat("Procesando", nombre)
   
   rbd_dv <- detectar_rbd_dv(nombre)
+  
   if (!is.null(rbd_dv)) {
     dv_calculado <- dv_rbd(rbd_dv$rbd)
     ok <- dv_calculado == rbd_dv$dv
+    
+    cat("- RBD-DV en nombre:", rbd_dv$rbd, '\n')
     return(tibble(
       RBD              = rbd_dv$rbd,
       Metodo           = "RBD-DV en nombre",
@@ -172,17 +167,22 @@ procesar_colegio <- function(nombre) {
   if (length(candidatos) == 1) {
     rbd <- as.integer(candidatos[1])
     en_listado <- rbd %in% rbd_validos
+    
+    cat(" -> Extraído del nombre:", rbd, '\n')
+    
     return(tibble(
       RBD    = rbd,
       Metodo = "Extraído del nombre",
       Estado = if (en_listado) "OK (verificado en listado simce)"
       else "OK (no verificable: colegio no est\u00e1 en listado simce)",
       Similitud_nombre = NA_real_,
-      Nombre_SIMCE     = if (en_listado) rbd_ref$nom_simce[rbd_ref$rbd == rbd][1] else NA_character_
+      Nombre_SIMCE     = if (en_listado) rbd_ref$comuna_std[rbd_ref$rbd == rbd][1] else NA_character_
     ))
   }
   
   if (length(candidatos) >= 2) {
+    cat(' -> Extraído del nombre (ambiguo). Candidatos:', paste(candidatos, collapse = ", "), '\n')
+    
     return(tibble(
       RBD    = as.integer(candidatos[1]),
       Metodo = "Extraído del nombre (ambiguo)",
@@ -195,7 +195,10 @@ procesar_colegio <- function(nombre) {
   
   # length(candidatos) == 0  ->  no hay número en el nombre: buscar por similitud
   m <- buscar_por_nombre(nombre)
+  
   if (!is.na(m$similitud) && m$similitud >= UMBRAL_ACEPTACION) {
+    cat(" -> Coincidencia por nombre", m$rbd_sugerido,  "(similitud", m$similitud, "%)", '\n')
+    
     tibble(
       RBD    = as.integer(m$rbd_sugerido),
       Metodo = "Coincidencia por nombre (listado simce)",
@@ -204,6 +207,8 @@ procesar_colegio <- function(nombre) {
       Nombre_SIMCE     = m$nombre_simce
     )
   } else {
+    cat(" -> NO ENCONTRADO - mejor coincidencia'", m$nombre_simce,"'(", m$similitud, "%) - revisar manualmente", '\n')
+    
     tibble(
       RBD    = NA_integer_,
       Metodo = "Sin número en el nombre",
@@ -215,10 +220,13 @@ procesar_colegio <- function(nombre) {
   }
 }
 
-resultado <- ensayo_simce %>% 
+resultado <- ensayo_simce %>%
   rowwise() %>%
   mutate(procesar_colegio(colegio)) %>%
   ungroup()
+
+resultado %>% 
+  filter(!rbd_santillana == RBD | (is.na(rbd_santillana) & !is.na(RBD))) 
 
 # -----------------------------------------------------------------------------
 # 6. RESUMEN Y EXPORTACIÓN
