@@ -18,7 +18,7 @@ rutas <- config::get(file = "config.yml")
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 
-archivo_diagnosticos <- ruta_data_intermedia |> file.path('prueba_diagnostico', 'consolidado_pruebas_diagnostico.parquet')
+archivo_ensayo <- ruta_data_intermedia |> file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet')
 archivo_simces <- ruta_data_intermedia |> file.path('simce', 'consolidado_datos_simce_rbd.parquet')
 
 archivo_salida <- ruta_data_intermedia |> file.path('prueba_diagnostico', 'diccionario_rbd_prueba_diagnostico.xlsx')
@@ -26,8 +26,8 @@ archivo_salida <- ruta_data_intermedia |> file.path('prueba_diagnostico', 'dicci
 # -----------------------------------------------------------------------------
 # 1. CARGA DE DATOS
 # -----------------------------------------------------------------------------
-pruebas_diagnostico <- read_parquet(archivo_diagnosticos) |> 
-  select(id_colegio, colegio) %>%
+ensayo_simce <- read_parquet(archivo_ensayo) |> 
+  select(id_colegio, colegio, rbd_santillana = rbd) %>%
   distinct(colegio, .keep_all = TRUE)
 
 rbd_ref <- read_parquet(archivo_simces) |> 
@@ -61,7 +61,7 @@ dv_rbd <- function(rbd) {
 #      - Si el nombre trae el patrón "RBD-DV" (ej. "1393-5"), se interpreta
 #        como RBD + dígito verificador y se valida con dv_rbd().
 # -----------------------------------------------------------------------------
-colegios_por_rbd <- pruebas_diagnostico |> 
+colegios_por_rbd <- ensayo_simce |> 
   mutate(rbd_candidato = extraer_rbd_candidatos(colegio),
          rbd_candidato = as.integer(rbd_candidato)) |> 
   left_join(rbd_ref, by = c('rbd_candidato' = 'rbd')) |> 
@@ -215,7 +215,7 @@ procesar_colegio <- function(nombre) {
   }
 }
 
-resultado <- pruebas_diagnostico %>% 
+resultado <- ensayo_simce %>% 
   rowwise() %>%
   mutate(procesar_colegio(colegio)) %>%
   ungroup()
