@@ -51,3 +51,7 @@ rsconnect/
 # Archivos de datos
 data/
 outputs/
+
+# Archivos privados
+.api_keys
+
