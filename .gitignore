@@ -53,5 +53,5 @@ data/
 outputs/
 
 # Archivos privados
-.api_keys
+.env
 
