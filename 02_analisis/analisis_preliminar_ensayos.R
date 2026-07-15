@@ -24,10 +24,29 @@ ensayos_santillana <- ensayos_santillana0 %>%
     nivel = case_when(str_detect(tolower(curso), '2..m') ~ '2m',
                       str_detect(tolower(curso), '4..b') ~ '4b'),
     area = case_when(str_detect(tolower(area), 'lenguaje') ~ 'lenguaje', 
-                     str_detect(tolower(area), 'mate') ~ 'matematica'))
+                     str_detect(tolower(area), 'mate') ~ 'matematica'),
+    tipo_evaluacion = str_extract(str_squish(evaluacion), '\\w+ \\w+ \\d'),
+    apellido_evaluacion = evaluacion %>% 
+      str_remove('\\(202.\\)') %>% 
+      str_remove('-') %>% 
+      str_squish() %>% 
+      str_remove(tipo_evaluacion) %>% 
+      str_squish(),
+    apellido_evaluacion = ifelse(apellido_evaluacion == '', NA, apellido_evaluacion)
+    )
 
-ensayos_santillana %>% 
-  write_csv('ensayos_santiyana.csv')
+# nombres_unicos <- unique(ensayos_santillana$nombre %>% tolower() %>% str_squish())
+# nombres_unicos_select <- nombres_unicos
+# 
+# dist_matrix <- stringdist::stringdistmatrix(nombres_unicos_select, nombres_unicos_select,
+#                                             method = 'cosine')    
+# diag(dist_matrix) <- Inf
+# minimos <- max.col(-dist_matrix, ties.method = "first")
+# dist_minimo <- matrixStats::rowMins(dist_matrix)
+# 
+# comparacion <- data.frame(nombre = nombres_unicos_select, 
+#                           nombre_cercano = nombres_unicos_select[minimos],
+#                           distancia = dist_minimo)
 
 ## SIMCES ----
 simce0_rbd <- ruta_data_intermedia %>% 
