@@ -13,6 +13,7 @@ escerdae:
   ruta_data_intermedia: "C:/Users/escerdae/OneDrive - Instituto Nacional de Estadisticas/personal/otros/modelo-simce-santillana/data_intermedia"
   ruta_outputs: "C:/Users/escerdae/OneDrive - Instituto Nacional de Estadisticas/personal/otros/modelo-simce-santillana/outputs"
 
-abel:
-  ruta_data_in: "C:/Users/Usuario/OneDrive/Trabajos Freelance/santillana/data_in"
-  ruta_outputs: "C:/Users/Usuario/OneDrive/Trabajos Freelance/santillana/data_out"
+abelo:
+  ruta_data_in: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/data_in/simce_agencia_calidad_educacion"
+  ruta_data_intermedia: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/data_intermedia"
+  ruta_outputs: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/data_out/simce_agencia_calidad_educacion"
