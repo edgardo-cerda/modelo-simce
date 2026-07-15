@@ -55,3 +55,8 @@ outputs/
 # Archivos privados
 .env
 
+# Archivos de datos
+*.csv
+*.csv2
+*.parquet
+*.xlsx
