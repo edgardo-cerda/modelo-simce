@@ -14,5 +14,5 @@ escerdae:
   ruta_outputs: "C:/Users/escerdae/OneDrive - Instituto Nacional de Estadisticas/personal/otros/modelo-simce-santillana/outputs"
 
 abel:
-  ruta_data_in: "RELLENAR"
-  ruta_outputs: "RELLENAR"
+  ruta_data_in: "C:/Users/Usuario/OneDrive/Trabajos Freelance/santillana/data_in"
+  ruta_outputs: "C:/Users/Usuario/OneDrive/Trabajos Freelance/santillana/data_out"
