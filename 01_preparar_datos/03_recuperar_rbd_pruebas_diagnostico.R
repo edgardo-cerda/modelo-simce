@@ -23,7 +23,8 @@ ruta_data_intermedia <- rutas$ruta_data_intermedia
 archivo_ensayo <- ruta_data_intermedia |> file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet')
 archivo_simces <- ruta_data_intermedia |> file.path('simce', 'consolidado_datos_simce_rbd.parquet')
 
-archivo_salida <- ruta_data_intermedia |> file.path('prueba_diagnostico', 'diccionario_rbd_prueba_diagnostico.xlsx')
+archivo_salida <- ruta_data_intermedia |> 
+  file.path('ensayo_simce', 'diccionario_rbd_ensayo.xlsx')
 
 # -----------------------------------------------------------------------------
 # 1. CARGA DE DATOS
@@ -228,29 +229,24 @@ resultados_clasificados <- resultado %>%
   mutate(
     rbd_revisado = case_when(
       rbd_santillana == rbd_identificado ~ rbd_santillana,
-      Estado == 'OK (verificado en listado simce)' ~ 'rbd_identificado confirmado',
-      is.na(rbd_santillana) & !is.na(rbd_identificado) & Similitud_nombre > 91 ~ 'rbd_identificado muy probable',
-      is.na(rbd_santillana) & !is.na(rbd_identificado)  ~ 'Revisar',
-      rbd_santillana != rbd_identificado & !is.na(rbd_santillana) & !is.na(rbd_identificado) ~ 'Revisar',
-      is.na(rbd_santillana) & is.na(rbd_identificado) ~ 'Sin rbd_identificado',
-      !is.na(rbd_santillana) & is.na(rbd_identificado) ~ 'Sin rbd_identificado en SIMCE'),
-    
-    )
+      Estado == 'OK (verificado en listado simce)' ~ rbd_identificado ,
+      is.na(rbd_santillana) & !is.na(rbd_identificado)  ~ rbd_identificado ,
+      rbd_santillana != rbd_identificado & !is.na(rbd_santillana) & !is.na(rbd_identificado) ~ rbd_santillana,
+      is.na(rbd_santillana) & is.na(rbd_identificado) ~ NA,
+      !is.na(rbd_santillana) & is.na(rbd_identificado) ~ rbd_santillana),
     clasificacion = case_when(
-    rbd_santillana == rbd_identificado ~ 'rbd_identificado confirmado',
-    Estado == 'OK (verificado en listado simce)' ~ 'rbd_identificado confirmado',
-    is.na(rbd_santillana) & !is.na(rbd_identificado) & Similitud_nombre > 91 ~ 'rbd_identificado muy probable',
+    rbd_santillana == rbd_identificado ~ 'OK',
+    Estado == 'OK (verificado en listado simce)' ~ 'OK',
+    is.na(rbd_santillana) & !is.na(rbd_identificado) & Similitud_nombre > 91 ~ 'OK',
     is.na(rbd_santillana) & !is.na(rbd_identificado)  ~ 'Revisar',
     rbd_santillana != rbd_identificado & !is.na(rbd_santillana) & !is.na(rbd_identificado) ~ 'Revisar',
     is.na(rbd_santillana) & is.na(rbd_identificado) ~ 'Sin rbd_identificado',
-    !is.na(rbd_santillana) & is.na(rbd_identificado) ~ 'Sin rbd_identificado en SIMCE')
-      
-    ))
+    !is.na(rbd_santillana) & is.na(rbd_identificado) ~ 'Revisar')
+    )
 
 # Resumen y comparacion con rbd de santillana:
 resultados_clasificados %>% 
-  filter(clasificacion %in% c('Revisar', 'Sin rbd_identificado', 'Sin rbd_identificado en SIMCE')) %>% 
-  view()
+  count(clasificacion)
 
 # -----------------------------------------------------------------------------
 # 6. RESUMEN Y EXPORTACIÓN
@@ -267,4 +263,4 @@ cat("Resueltos por coincidencia de nombre (>=", UMBRAL_ACEPTACION, "%):",
 cat("Sin resolver (requieren revisión manual):",
     sum(resultado$Metodo == "Sin número en el nombre"), "\n")
 
-write_xlsx(resultado, archivo_salida)
+write_xlsx(resultados_clasificados, archivo_salida)
