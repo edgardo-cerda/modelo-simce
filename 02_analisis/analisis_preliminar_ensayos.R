@@ -19,21 +19,7 @@ diccionario_rbd <- ruta_data_intermedia %>%
   select(id_colegio, rbd_revisado)
   
 ensayos_santillana <- ensayos_santillana0 %>% 
-  left_join(diccionario_rbd, by = 'id_colegio') %>% 
-  mutate(
-    nivel = case_when(str_detect(tolower(curso), '2..m') ~ '2m',
-                      str_detect(tolower(curso), '4..b') ~ '4b'),
-    area = case_when(str_detect(tolower(area), 'lenguaje') ~ 'lenguaje', 
-                     str_detect(tolower(area), 'mate') ~ 'matematica'),
-    tipo_evaluacion = str_extract(str_squish(evaluacion), '\\w+ \\w+ \\d'),
-    apellido_evaluacion = evaluacion %>% 
-      str_remove('\\(202.\\)') %>% 
-      str_remove('-') %>% 
-      str_squish() %>% 
-      str_remove(tipo_evaluacion) %>% 
-      str_squish(),
-    apellido_evaluacion = ifelse(apellido_evaluacion == '', NA, apellido_evaluacion)
-    )
+  left_join(diccionario_rbd, by = 'id_colegio')
 
 # nombres_unicos <- unique(ensayos_santillana$nombre %>% tolower() %>% str_squish())
 # nombres_unicos_select <- nombres_unicos
