@@ -3,10 +3,8 @@ library(arrow)
 library(readxl)
 
 # Configurar rutas de archivos: ----
-usuario <- Sys.info()[["user"]]
-rutas <- config::get(
-  config = usuario  
-  ,file = "config.yml")
+# usuario <- Sys.info()[["user"]]
+rutas <- config::get(file = "config.yml")
 
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
@@ -135,8 +133,8 @@ dup_alumnos %>%
   writexl::write_xlsx(file.path(dir_salida, 'duplicado_alumnos_colegio_usuario_nombre_evaluacion.xlsx'))
 
 # liberar espacio y eliminar objetos
-gc()
-rm(list=ls())
+# gc()
+# rm(list=ls())
 
 
 
