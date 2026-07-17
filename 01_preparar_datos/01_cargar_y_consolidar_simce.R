@@ -28,6 +28,57 @@ ruta_archivos_brutos_simce_desduplicado <-
   distinct(nivel, año,  .keep_all = TRUE) |> 
   pull(base)
 
+# Los datos usan separadores inconsistentes, así que agrego una función para detectarlo automático y cargar los datos:
+identificar_separadores <- function(ruta_archivo) {
+  # 1. Leer una muestra de las primeras 100 líneas como texto plano
+  lineas <- read_lines(ruta_archivo, n_max = 100)
+  texto_completo <- paste(lineas, collapse = "\n")
+  
+  # 2. Identificar el separador de columnas (delimitador)
+  # Contamos cuántas veces aparece cada uno en la muestra
+  conteos_delim <- c(
+    "," = str_count(texto_completo, ","),
+    ";" = str_count(texto_completo, ";"),
+    "|" = str_count(texto_completo, "\\|")
+  )
+  
+  # Seleccionamos el que tenga mayor presencia
+  delimitador_predilecto <- names(which.max(conteos_delim))
+  
+  # Si no hay ninguno de los tres, por defecto asumimos coma
+  if (max(conteos_delim) == 0) {
+    delimitador_predilecto <- ","
+  }
+  
+  # 3. Identificar el separador decimal
+  # Buscamos patrones numéricos explícitos: número-punto-número vs número-coma-número
+  con_punto <- str_detect(texto_completo, "[0-9]+\\.[0-9]+")
+  con_coma  <- str_detect(texto_completo, "[0-9]+,[0-9]+")
+  
+  if (con_punto && !con_coma) {
+    decimal_predilecto <- "."
+  } else if (con_coma && !con_punto) {
+    decimal_predilecto <- ","
+  } else if (con_punto && con_coma) {
+    # Conflicto: si aparecen ambos, descartamos el que esté actuando como delimitador de columnas
+    if (delimitador_predilecto == ",") {
+      decimal_predilecto <- "."
+    } else {
+      # Si el delimitador es ";" o "|", el que tenga decimales suele ser la coma en formato europeo/latino
+      decimal_predilecto <- "," 
+    }
+  } else {
+    # Si no se detectan números con decimales, usamos el estándar según el delimitador
+    decimal_predilecto <- ifelse(delimitador_predilecto == ",", ".", ",")
+  }
+  
+  # Retornar los resultados en una lista estructurada
+  return(list(
+    separador_columnas = delimitador_predilecto,
+    separador_decimal  = decimal_predilecto
+  ))
+}
+
 # Cargar y leer los archivos, para después consolidarlos: ----
 leer_simce <- function(archivo_zip, nombre_zip) {
   
@@ -39,40 +90,31 @@ leer_simce <- function(archivo_zip, nombre_zip) {
     slice(1) |> 
     pull(Name)
   
-  data <- tryCatch({    
-    # Leer con read_delim
-    archivo <- read_csv(unz(description = archivo_zip, filename = archivo_a_cargar), 
-                        locale = locale(encoding = "Latin1"))
-    if (ncol(archivo) == 1) archivo <- read_csv2(unz(description = archivo_zip, filename = archivo_a_cargar), 
-                                                 locale = locale(encoding = "Latin1")) 
-    if (ncol(archivo) == 1) archivo <- read_delim(unz(description = archivo_zip, filename = archivo_a_cargar), 
-                                                  delim = '|', locale = locale(encoding = "Latin1")) 
-    if (ncol(archivo) == 1) errorCondition()
-    
-    return(archivo)
-    
-    }, # Hay un archivo que tiene un problema en los nombres de variables, así que hay que hacer todo este webeo para leerlo:
-    error = function(e) {
-      
-      nombres_variables_limpias <- readLines(unz(description = archivo_zip,
-                                                 filename = archivo_a_cargar),
-                                             n = 1) |>
-        str_remove_all('\\"') |>
-        str_split_1('\\|')
-      
-      archivo <- read_delim(unz(description = archivo_zip,
-                                filename = archivo_a_cargar),
-                            delim = '|',
-                            skip = 1, 
-                            locale = locale(encoding = "Latin1"))
-      names(archivo) <- nombres_variables_limpias
-      
-      archivo
-        # archivo |> janitor::clean_names()
-    }
-  )
+  # Para identificar distintos tipos de separadores (decimal y del csv)
+  separadores <- identificar_separadores(unz(description = archivo_zip, 
+                                             filename = archivo_a_cargar))
   
-  return(data)
+  # Hay archivos con nombres mal guardados, así que guardo los nombres por separado, corrijo, y después las pego
+  nombres_variables_limpias <- readLines(unz(description = archivo_zip,
+                                             filename = archivo_a_cargar),
+                                         n = 1) |>
+    str_remove_all('\\"') |>
+    str_split_1(paste0('\\', separadores$separador_columnas))
+  
+  archivo <- read_delim(unz(description = archivo_zip, filename = archivo_a_cargar),
+                        locale = locale(encoding = "Latin1",
+                                        decimal_mark = separadores$separador_decimal),
+                        delim = separadores$separador_columnas,
+                        skip = 1)
+  
+  n_dif_names <- ncol(archivo) - length(nombres_variables_limpias)
+  if (n_dif_names > 0) {
+    nombres_nuevos <- paste0('var_', 1:n_dif_names)
+    nombres_variables_limpias <- c(nombres_variables_limpias, nombres_nuevos)
+  }
+  names(archivo) <- nombres_variables_limpias
+  
+  return(archivo)
 }
 
 ## SIMCE por alumno: ----
@@ -92,7 +134,12 @@ datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |>
     return(data_homologada)
     }
     ) |> 
-  list_rbind()
+  list_rbind() |> 
+  # Corregir casos que por alguna razón sigue saliendo con error:
+  mutate(
+    ptje_mate = ifelse(agno == 2024 & grado == '2m', ptje_mate/100, ptje_mate),
+    ptje_lect = ifelse(agno == 2024 & grado == '2m', ptje_lect/100, ptje_lect)
+  )
   
 datos_simce_alu_mrun_consolidado |> 
   write_parquet(file.path(dir_salida, 'consolidado_datos_simce_alu.parquet'))
@@ -133,6 +180,7 @@ datos_simce_rbd_consolidado_long <- datos_simce_rbd_consolidado |>
   mutate(area = ifelse(str_detect(area, 'lect'), 'lenguaje', 'matematica'),
          agno = as.numeric(agno)) |> 
   rename(promedio_simce = prom)
-  
+
+
 datos_simce_rbd_consolidado_long |> 
   write_parquet(file.path(dir_salida, 'consolidado_datos_simce_rbd.parquet'))

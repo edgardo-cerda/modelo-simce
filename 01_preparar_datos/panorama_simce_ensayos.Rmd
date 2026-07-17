@@ -81,7 +81,7 @@ simce_alu %>% count(agno, grado) %>%
   kable(caption = "SIMCE alumno: registros por año y grado")
 ```
 
-**Lectura:** la cobertura de grados no es homogénea entre años (p. ej., 6° básico solo aparece en 2024 y 8° básico solo en 2025 en la base RBD). Los ensayos cubren solo 4b y 2m, por lo que la comparación entre fuentes se restringe a esos niveles. Nótese además que en la base RBD el conteo de 2m en 2024 casi duplica al de otros años, lo que anticipa duplicados (ver sección de errores).
+**Lectura:** la cobertura de grados no es homogénea entre años (p. ej., 6° básico solo aparece en 2024 y 8° básico solo en 2025 en la base RBD). Los ensayos cubren solo 4b y 2m, por lo que la comparación entre fuentes se restringe a esos niveles.
 
 # Ensayos Santillana
 
@@ -115,7 +115,7 @@ ensayos %>%
   filter(porcentaje_logro <= 100) %>%
   ggplot(aes(x = factor(agno), y = porcentaje_logro, fill = area)) +
   geom_boxplot(outlier.alpha = .05) +
-  facet_wrap(~nivel, labeller = labeller(nivel = c("4b" = "4° Básico", "2m" = "2° Medio"))) +
+  facet_grid(nivel~., labeller = labeller(nivel = c("4b" = "4° Básico", "2m" = "2° Medio"))) +
   scale_fill_manual(values = pal_area) +
   labs(title = "% de logro por año, área y nivel", x = "Año", y = "% de logro", fill = "Área")
 
