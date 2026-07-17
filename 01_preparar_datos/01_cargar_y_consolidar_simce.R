@@ -15,10 +15,18 @@ dir_salida |> dir.create(showWarnings = FALSE)
 
 # Listado de archivos brutos SIMCE: ----
 ruta_archivos_brutos_simce <- ruta_data_in |> 
-  file.path('simce_agencia_calidad_educacion') |> 
   list.files(pattern = 'Simce.*.zip', 
              full.names = TRUE)  
 
+# Quitar duplicados:
+ruta_archivos_brutos_simce_desduplicado <- 
+  data.frame(base = ruta_archivos_brutos_simce) |>
+  mutate(
+    nivel = str_extract(base, '(cuarto|segundo|sexto|octavo)'),
+    año = str_extract(base, '(202.) -')) |> 
+  group_by(nivel, año) |> 
+  distinct(nivel, año,  .keep_all = TRUE) |> 
+  pull(base)
 
 # Cargar y leer los archivos, para después consolidarlos: ----
 leer_simce <- function(archivo_zip, nombre_zip) {
@@ -68,7 +76,7 @@ leer_simce <- function(archivo_zip, nombre_zip) {
 }
 
 ## SIMCE por alumno: ----
-datos_simce_alu_mrun <- ruta_archivos_brutos_simce |> 
+datos_simce_alu_mrun <- ruta_archivos_brutos_simce_desduplicado |> 
   map(leer_simce, nombre_zip = 'alu_mrun')
 
 datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |> 
@@ -90,7 +98,7 @@ datos_simce_alu_mrun_consolidado |>
   write_parquet(file.path(dir_salida, 'consolidado_datos_simce_alu.parquet'))
 
 ## SIMCE por colegio: ----
-datos_simce_rbd <- ruta_archivos_brutos_simce |> 
+datos_simce_rbd <- ruta_archivos_brutos_simce_desduplicado |> 
   map(leer_simce, nombre_zip = '_rbd')
 
 datos_simce_rbd_consolidado <- datos_simce_rbd |> 
@@ -111,7 +119,20 @@ datos_simce_rbd_consolidado <- datos_simce_rbd |>
     return(data_homologada)
     }
     ) |> 
-  list_rbind()
+  list_rbind() 
+
+# Pasar resultados por area a formato largo:
+
+datos_simce_rbd_consolidado_long <- datos_simce_rbd_consolidado |> 
+  select(-starts_with('palu')) |> 
+  pivot_longer(
+    cols = starts_with(c('nalu', 'prom')),
+                       names_to = c(".value", "area"),
+                       names_pattern = "(.*)_(.*)"
+                       ) |> 
+  mutate(area = ifelse(str_detect(area, 'lect'), 'lenguaje', 'matematica'),
+         agno = as.numeric(agno)) |> 
+  rename(promedio_simce = prom)
   
-datos_simce_rbd_consolidado |> 
+datos_simce_rbd_consolidado_long |> 
   write_parquet(file.path(dir_salida, 'consolidado_datos_simce_rbd.parquet'))
