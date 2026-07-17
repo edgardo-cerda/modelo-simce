@@ -60,3 +60,4 @@ outputs/
 *.csv2
 *.parquet
 *.xlsx
+*.html
