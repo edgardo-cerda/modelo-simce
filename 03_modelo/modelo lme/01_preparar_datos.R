@@ -56,35 +56,20 @@ dir_salidas %>% dir.create(showWarnings = FALSE)
 # Cargar datos ----
 ## ENSAYOS ----
 ensayos_santillana0 <- ruta_data_intermedia %>% 
-  file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet') %>% 
-  read_parquet()
-
-diccionario_rbd <- ruta_data_intermedia %>% 
-  file.path('ensayo_simce', 'diccionario_rbd_ensayo.xlsx') %>%
-  read_excel() %>% 
-  select(id_colegio, rbd_revisado)
+  file.path('ensayo_simce', 'ensayos_santillana_corregido.parquet') %>% 
+  read_parquet() 
 
 ensayos <- ensayos_santillana0 %>% 
-  left_join(diccionario_rbd, by = 'id_colegio') %>% 
-  mutate(
-    nivel = case_when(str_detect(tolower(curso), '2..m') ~ '2m',
-                      str_detect(tolower(curso), '4..b') ~ '4b'),
-    area = case_when(str_detect(tolower(area), 'lenguaje') ~ 'lenguaje', 
-                     str_detect(tolower(area), 'mate') ~ 'matematica'),
-    agno = as.numeric(agno))
+  mutate(agno = as.numeric(agno)) |> 
+  filter(!outlier_iqr, !outlier_isoforest)
 
 ## SIMCES ----
 simce0_rbd <- ruta_data_intermedia %>% 
-  file.path('simce', 'consolidado_datos_simce_rbd.parquet') %>% 
+  file.path('simce', 'resultados_simce_rbd_corregido.parquet') %>% 
   read_parquet()
 
 simce <- simce0_rbd %>% 
-  select(agno, grado, rbd, starts_with('prom')) %>% 
-  pivot_longer(cols = starts_with('prom'),
-               names_to = 'area',
-               values_to = 'promedio_simce') %>% 
-  mutate(area = ifelse(str_detect(area, 'lect'), 'lenguaje', 'matematica'),
-         agno = as.numeric(agno))
+  filter(!outlier_iqr, !outlier_isoforest)
 
 # ---- 2. Limpieza de ensayos -----------------------------------------
 ensayos_limpio <- ensayos %>%

@@ -66,6 +66,7 @@ cat("Hay", sum(is.na(conversion_id_colegio_rbd$rbd)), "colegios sin RBD")
 datos_ensayo_simce_consolidado_rbd <- datos_ensayo_simce_consolidado %>% 
   left_join(conversion_id_colegio_rbd, by = 'id_colegio') %>% 
   mutate(
+    agno = as.numeric(agno),
     nivel = case_when(str_detect(tolower(curso), '2..m') ~ '2m',
                       str_detect(tolower(curso), '4..b') ~ '4b'),
     area = case_when(str_detect(tolower(area), 'lenguaje') ~ 'lenguaje', 
@@ -81,6 +82,26 @@ datos_ensayo_simce_consolidado_rbd <- datos_ensayo_simce_consolidado %>%
     n_evaluacion = str_extract(tipo_evaluacion, '\\d+') %>% str_squish(),
     tipo_evaluacion = str_remove(tipo_evaluacion, '\\d+') %>% str_squish()
   ) 
+
+# Cargar y agregar datos de RBD revisados, si es que existen:
+ruta_diccionario_rbd <- ruta_data_intermedia %>% 
+  file.path('ensayo_simce', 'diccionario_rbd_ensayo.xlsx')
+
+if (file.exists(ruta_diccionario_rbd)) {
+  cat("Se agrega el RBD revisado")
+  diccionario_rbd <- ruta_diccionario_rbd |> 
+    read_excel() %>% 
+    select(id_colegio, rbd_revisado)
+  
+  datos_ensayo_simce_consolidado_rbd <- datos_ensayo_simce_consolidado_rbd %>% 
+    left_join(diccionario_rbd, by = 'id_colegio')
+  
+}
+
+
+# Guardar resultados
+datos_ensayo_simce_consolidado_rbd |> 
+  write_parquet(file.path(dir_salida, 'consolidado_ensayo_simce.parquet'))
 
 
 # Colegios sin RBD ----
@@ -115,11 +136,6 @@ dup_alumnos<-datos_ensayo_simce_consolidado_rbd %>%
 tab_curso<-datos_ensayo_simce_consolidado_rbd %>%
   filter(id_colegio==2016672) %>% 
   count(curso,colegio,id_colegio) 
-
-
-# Guardar resultados
-datos_ensayo_simce_consolidado_rbd |> 
-  write_parquet(file.path(dir_salida, 'consolidado_ensayo_simce.parquet'))
 
 # Bases de datos Excel para enviar a Santillana ----
 tab_curso %>% 

@@ -1,0 +1,712 @@
+---
+title: "Revisión de calidad de datos: SIMCE y Ensayos Santillana"
+subtitle: "Detección de errores y outliers previo a modelamiento"
+author: "QA automatizado"
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 9,
+  fig.height = 5
+)
+
+# Paquetes -------------------------------------------------------------
+paquetes <- c("tidyverse", "knitr", "scales", "janitor")
+faltantes <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
+if (length(faltantes) > 0) install.packages(faltantes)
+
+library(tidyverse)
+library(knitr)
+library(scales)
+library(janitor)
+library(isotree)
+
+# DT es opcional (tablas interactivas). Si no está instalado, se usa kable.
+usar_dt <- requireNamespace("DT", quietly = TRUE)
+if (usar_dt) library(DT)
+
+tabla <- function(df, ...) {
+  if (usar_dt) {
+    DT::datatable(df, options = list(scrollX = TRUE, pageLength = 10), ...)
+  } else {
+    knitr::kable(df, ...)
+  }
+}
+
+# Configurar rutas de archivos: ----
+rutas <- config::get(file = "config.yml")
+ruta_data_in <- rutas$ruta_data_in
+ruta_data_intermedia <- rutas$ruta_data_intermedia
+ruta_outputs <- rutas$ruta_outputs
+
+carpeta_salida <- file.path(ruta_outputs, 'rev_data')
+
+dir.create(carpeta_salida, showWarnings = FALSE, recursive = TRUE)
+
+exportar_flag <- function(df, nombre) {
+  ruta <- file.path(carpeta_salida, paste0(nombre, ".csv"))
+  readr::write_csv(df, ruta)
+  invisible(ruta)
+}
+```
+
+# Objetivo
+
+Este reporte hace una revisión sistemática de errores y outliers en dos fuentes
+de datos que se usarán como insumo de un modelo:
+
+1. `resultados_simce_rbd.csv`: resultados oficiales SIMCE por establecimiento (RBD).
+2. `ensayos_santillana.csv`: resultados de pruebas de diagnóstico/ensayo (Santillana) a nivel de estudiante.
+
+Para cada dataset se revisa: estructura y tipos, valores faltantes, duplicados,
+consistencia de categorías, rangos plausibles de las variables numéricas,
+y outliers estadísticos (método IQR). Al final se deja un **log consolidado de
+issues** y se exportan a `r carpeta_salida` los subconjuntos de filas
+marcadas, para que puedan revisarse o excluirse antes de modelar.
+
+```{r cargar-datos}
+resultados <- ruta_data_intermedia |>  
+  file.path('simce', 'consolidado_datos_simce_rbd.parquet') |> 
+  arrow::read_parquet()
+ensayos    <- ruta_data_intermedia |>  
+  file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet') |> 
+  arrow::read_parquet()
+
+# Log de issues que se va llenando a lo largo del reporte
+issues_log <- tibble(
+  dataset = character(),
+  chequeo = character(),
+  n_filas_afectadas = integer(),
+  pct_del_total = double(),
+  severidad = character(),
+  detalle = character()
+)
+
+agregar_issue <- function(log, dataset, chequeo, n, total, severidad, detalle) {
+  bind_rows(log, tibble(
+    dataset = dataset,
+    chequeo = chequeo,
+    n_filas_afectadas = n,
+    pct_del_total = round(100 * n / total, 2),
+    severidad = severidad,
+    detalle = detalle
+  ))
+}
+```
+
+---
+
+# Parte 1: `resultados_simce_rbd.csv`
+
+## Estructura general
+
+```{r res-estructura}
+glimpse(resultados)
+n_resultados <- nrow(resultados)
+cat("Filas:", n_resultados, "| Columnas:", ncol(resultados), "\n")
+```
+
+```{r res-categorias}
+resultados %>%
+  summarise(
+    anios   = paste(sort(unique(agno)), collapse = ", "),
+    grados  = paste(sort(unique(grado)), collapse = ", "),
+    areas   = paste(sort(unique(area)), collapse = ", "),
+    n_rbd_unicos = n_distinct(rbd)
+  ) %>%
+  tabla()
+```
+
+Revisa manualmente que `anios`, `grados` y `areas` correspondan a lo esperado.
+Cualquier valor inesperado (typo, año fuera de rango, área mal escrita) debe
+investigarse aquí antes de seguir.
+
+## Valores faltantes
+
+```{r res-na}
+na_resumen <- resultados %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "columna", values_to = "n_na") %>%
+  mutate(pct_na = round(100 * n_na / n_resultados, 2))
+
+tabla(na_resumen)
+
+na_por_grupo <- resultados %>%
+  group_by(agno, grado, area) %>%
+  summarise(n = n(), n_na = sum(is.na(promedio_simce)), .groups = "drop") %>%
+  mutate(pct_na = round(100 * n_na / n, 2)) %>%
+  arrange(desc(pct_na))
+
+tabla(na_por_grupo)
+
+n_na_total <- sum(is.na(resultados$promedio_simce))
+issues_log <- agregar_issue(issues_log, "resultados_simce_rbd", "NA en promedio_simce",
+                             n_na_total, n_resultados, "media",
+                             "Revisar si son colegios sin rendición o error de carga.")
+```
+
+## Duplicados
+
+La llave natural del dataset debería ser (`agno`, `grado`, `rbd`, `area`).
+
+```{r res-duplicados}
+dup_res <- resultados %>%
+  add_count(agno, grado, rbd, area, name = "n_repeticiones") %>%
+  filter(n_repeticiones > 1) %>%
+  arrange(agno, grado, rbd, area)
+
+cat("Filas involucradas en duplicados de llave:", nrow(dup_res), "\n")
+cat("Grupos (agno, grado, rbd, area) duplicados:",
+    n_distinct(dup_res %>% select(agno, grado, rbd, area)), "\n")
+
+# ¿Los duplicados tienen el mismo valor de promedio_simce, o son conflictivos?
+dup_conflicto <- dup_res %>%
+  group_by(agno, grado, rbd, area) %>%
+  summarise(valores_distintos = n_distinct(promedio_simce), .groups = "drop") %>%
+  filter(valores_distintos > 1)
+
+cat("De esos grupos,", nrow(dup_conflicto),
+    "tienen valores DE PUNTAJE distintos entre las filas duplicadas (conflicto real).\n")
+
+tabla(head(dup_res, 200))
+
+issues_log <- agregar_issue(issues_log, "resultados_simce_rbd", "Filas duplicadas (agno, grado, rbd, area)",
+                             nrow(dup_res), n_resultados, "alta",
+                             paste0(nrow(dup_conflicto), " grupos con valores de puntaje distintos (conflicto real); el resto son duplicados exactos."))
+
+exportar_flag(dup_res, "resultados_duplicados")
+```
+
+## Rango plausible de `promedio_simce`
+
+La escala SIMCE se mueve típicamente entre ~100 y ~400 puntos, centrada
+alrededor de 250-260. Un puntaje de **0** no es un valor válido de la escala:
+casi siempre indica un colegio sin datos, sin rendición, o un error de carga
+codificado como 0 en vez de NA.
+
+```{r res-rango}
+resumen_num <- resultados %>%
+  filter(!is.na(promedio_simce)) %>%
+  summarise(
+    min = min(promedio_simce), p1 = quantile(promedio_simce, .01),
+    q1 = quantile(promedio_simce, .25), mediana = median(promedio_simce),
+    q3 = quantile(promedio_simce, .75), p99 = quantile(promedio_simce, .99),
+    max = max(promedio_simce)
+  )
+tabla(resumen_num)
+
+ceros_res <- resultados %>% filter(promedio_simce == 0)
+cat("Filas con promedio_simce == 0:", nrow(ceros_res), "\n")
+
+fuera_rango_res <- resultados %>%
+  filter(!is.na(promedio_simce), promedio_simce > 0,
+         (promedio_simce < 100 | promedio_simce > 400))
+cat("Filas con promedio_simce fuera de [100, 400] (y != 0):", nrow(fuera_rango_res), "\n")
+
+issues_log <- agregar_issue(issues_log, "resultados_simce_rbd", "promedio_simce == 0",
+                             nrow(ceros_res), n_resultados, "alta",
+                             "Probable código de 'sin dato' cargado como 0; considerar recodificar a NA.")
+issues_log <- agregar_issue(issues_log, "resultados_simce_rbd", "promedio_simce fuera de rango plausible [100,400]",
+                             nrow(fuera_rango_res), n_resultados, "media",
+                             "Revisar si son errores de digitación o casos reales extremos.")
+
+exportar_flag(ceros_res, "resultados_ceros")
+exportar_flag(fuera_rango_res, "resultados_fuera_de_rango")
+```
+
+## Outliers estadísticos (método IQR, por grupo agno-grado-area)
+
+Se calculan los límites de Tukey (`Q1 - 1.5*IQR`, `Q3 + 1.5*IQR`) **dentro de
+cada combinación** de año, grado y área, ya que la distribución de puntajes
+no es la misma entre grados ni entre lenguaje y matemática.
+
+```{r res-outliers-iqr}
+outliers_res <- resultados %>%
+  filter(!is.na(promedio_simce)) %>%
+  group_by(agno, grado, area) %>%
+  mutate(
+    q1 = quantile(promedio_simce, .25),
+    q3 = quantile(promedio_simce, .75),
+    iqr = q3 - q1,
+    lim_inf = q1 - 1.5 * iqr,
+    lim_sup = q3 + 1.5 * iqr,
+    es_outlier = promedio_simce < lim_inf | promedio_simce > lim_sup
+  ) %>%
+  ungroup() %>%
+  filter(es_outlier)
+
+cat("Outliers IQR detectados:", nrow(outliers_res),
+    sprintf("(%.2f%% de los datos no-NA)\n", 100 * nrow(outliers_res) / sum(!is.na(resultados$promedio_simce))))
+
+tabla(outliers_res %>% select(agno, grado, rbd, area, promedio_simce, lim_inf, lim_sup) %>% head(200))
+
+issues_log <- agregar_issue(issues_log, "resultados_simce_rbd", "Outliers IQR (por agno-grado-area)",
+                             nrow(outliers_res), n_resultados, "baja/media",
+                             "Outliers estadísticos dentro de su grupo; no necesariamente errores, revisar caso a caso.")
+
+exportar_flag(outliers_res, "resultados_outliers_iqr")
+```
+
+## Visualización de distribuciones
+
+```{r res-viz-box, fig.height=6}
+resultados %>%
+  filter(!is.na(promedio_simce)) %>%
+  ggplot(aes(x = factor(agno), y = promedio_simce, fill = area)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  facet_wrap(~ grado, scales = "free_y") +
+  labs(title = "Distribución de promedio_simce por año, grado y área",
+       x = "Año", y = "Puntaje SIMCE", fill = "Área") +
+  theme_minimal()
+```
+
+```{r res-viz-hist}
+resultados %>%
+  filter(!is.na(promedio_simce)) %>%
+  ggplot(aes(x = promedio_simce)) +
+  geom_histogram(binwidth = 10, fill = "steelblue", color = "white") +
+  labs(title = "Histograma general de promedio_simce",
+       x = "Puntaje SIMCE", y = "Frecuencia") +
+  theme_minimal()
+```
+
+## Cobertura por año/grado (conteo de RBD)
+
+Sirve para detectar caídas o saltos anómalos en la cantidad de colegios
+reportados de un año a otro (posible problema de carga incompleta).
+
+```{r res-cobertura}
+cobertura_res <- resultados %>%
+  group_by(agno, grado, area) %>%
+  summarise(n_filas = n(), n_rbd = n_distinct(rbd), .groups = "drop") %>%
+  arrange(grado, area, agno)
+
+tabla(cobertura_res)
+
+ggplot(cobertura_res, aes(x = factor(agno), y = n_rbd, color = area, group = area)) +
+  geom_line() + geom_point() +
+  facet_wrap(~ grado, scales = "free_y") +
+  labs(title = "N° de RBD reportados por año, grado y área",
+       x = "Año", y = "N RBD", color = "Área") +
+  theme_minimal()
+```
+
+---
+
+# Parte 2: `ensayos_santillana.csv`
+
+## Estructura general
+
+```{r ens-estructura}
+glimpse(ensayos)
+n_ensayos <- nrow(ensayos)
+cat("Filas:", n_ensayos, "| Columnas:", ncol(ensayos), "\n")
+```
+
+```{r ens-categorias}
+ensayos %>%
+  summarise(
+    anios = paste(sort(unique(agno)), collapse = ", "),
+    paises = paste(unique(pais), collapse = ", "),
+    areas = paste(sort(unique(area)), collapse = ", "),
+    niveles = paste(sort(unique(nivel)), collapse = ", "),
+    tipos_evaluacion = paste(sort(unique(tipo_evaluacion)), collapse = ", "),
+    n_evaluacion_rango = paste(range(n_evaluacion), collapse = " - ")
+  ) %>%
+  tabla()
+
+cat("\nValores únicos de apellido_evaluacion:\n")
+print(sort(unique(ensayos$apellido_evaluacion)))
+```
+
+```{r ens-pais-check}
+paises_raros <- ensayos %>% filter(pais != "Chile")
+cat("Filas con país distinto de 'Chile':", nrow(paises_raros), "\n")
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "pais != 'Chile'",
+                             nrow(paises_raros), n_ensayos, "alta",
+                             "Si el modelo asume solo Chile, estas filas deben excluirse o investigarse.")
+```
+
+## Valores faltantes
+
+```{r ens-na}
+na_resumen_ens <- ensayos %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "columna", values_to = "n_na") %>%
+  mutate(pct_na = round(100 * n_na / n_ensayos, 2)) %>%
+  arrange(desc(pct_na))
+
+tabla(na_resumen_ens)
+
+na_rbd_por_anio <- ensayos %>%
+  group_by(agno) %>%
+  summarise(n = n(), n_na_rbd = sum(is.na(rbd)), .groups = "drop") %>%
+  mutate(pct_na_rbd = round(100 * n_na_rbd / n, 2))
+tabla(na_rbd_por_anio)
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "NA en rbd",
+                             sum(is.na(ensayos$rbd)), n_ensayos, "alta",
+                             "Sin rbd no se puede cruzar con resultados_simce_rbd; ver si rbd_revisado lo suple.")
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "NA en apellido_evaluacion",
+                             sum(is.na(ensayos$apellido_evaluacion)), n_ensayos, "baja",
+                             "Campo secundario/descriptivo; revisar si es relevante para el modelo.")
+```
+
+## Duplicados
+
+Llave esperada a nivel de intento de evaluación: (`id_usuario_curso`, `id_evaluacion`).
+
+```{r ens-duplicados}
+dup_ens <- ensayos %>%
+  add_count(id_usuario_curso, id_evaluacion, name = "n_repeticiones") %>%
+  filter(n_repeticiones > 1) %>%
+  arrange(id_usuario_curso, id_evaluacion)
+
+cat("Filas duplicadas en (id_usuario_curso, id_evaluacion):", nrow(dup_ens), "\n")
+tabla(dup_ens)
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "Filas duplicadas (id_usuario_curso, id_evaluacion)",
+                             nrow(dup_ens), n_ensayos, "media",
+                             "Verificar si son cargas repetidas o correcciones que deberían quedarse con un solo registro.")
+
+exportar_flag(dup_ens, "ensayos_duplicados")
+```
+
+## Consistencia `rbd` vs `rbd_revisado`
+
+```{r ens-rbd-consistencia}
+ambos_no_na <- ensayos %>% filter(!is.na(rbd), !is.na(rbd_revisado))
+inconsistentes <- ambos_no_na %>% filter(rbd != rbd_revisado)
+
+cat("Filas con ambos campos no-NA:", nrow(ambos_no_na), "\n")
+cat("De esas, con rbd distinto de rbd_revisado:", nrow(inconsistentes),
+    sprintf("(%.2f%%)\n", 100 * nrow(inconsistentes) / nrow(ambos_no_na)))
+
+tabla(head(inconsistentes %>% select(agno, id_colegio, rbd, rbd_revisado, curso), 200))
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "rbd != rbd_revisado",
+                             nrow(inconsistentes), n_ensayos, "alta",
+                             "Recomendado: usar rbd_revisado como llave canónica para cruces con SIMCE.")
+
+exportar_flag(inconsistentes, "ensayos_rbd_inconsistente")
+
+# Un mismo id_colegio, ¿mapea siempre al mismo rbd_revisado?
+map_colegio_rbd <- ensayos %>%
+  filter(!is.na(rbd_revisado)) %>%
+  group_by(id_colegio) %>%
+  summarise(n_rbd_distintos = n_distinct(rbd_revisado), .groups = "drop") %>%
+  filter(n_rbd_distintos > 1)
+
+cat("\nid_colegio que mapean a más de un rbd_revisado:", nrow(map_colegio_rbd), "\n")
+tabla(map_colegio_rbd)
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "id_colegio con múltiples rbd_revisado",
+                             nrow(map_colegio_rbd), n_distinct(ensayos$id_colegio), "media",
+                             "Un mismo colegio no debería tener más de un RBD; revisar mapeo id_colegio-rbd.")
+```
+
+## Rango plausible de `porcentaje_logro`
+
+Por definición, un porcentaje de logro **no puede ser menor que 0 ni mayor
+que 100**. Cualquier valor fuera de ese rango es un error de cálculo o de
+carga (p. ej. mal escalado, o duplicación del puntaje).
+
+```{r ens-rango-logro}
+resumen_logro <- ensayos %>%
+  summarise(
+    min = min(porcentaje_logro), p1 = quantile(porcentaje_logro, .01),
+    q1 = quantile(porcentaje_logro, .25), mediana = median(porcentaje_logro),
+    q3 = quantile(porcentaje_logro, .75), p99 = quantile(porcentaje_logro, .99),
+    max = max(porcentaje_logro)
+  )
+tabla(resumen_logro)
+
+fuera_0_100 <- ensayos %>% filter(porcentaje_logro < 0 | porcentaje_logro > 100)
+cat("Filas con porcentaje_logro fuera de [0, 100]:", nrow(fuera_0_100), "\n")
+tabla(fuera_0_100 %>%
+        select(agno, id_colegio, curso, area, nivel, tipo_evaluacion, porcentaje_logro))
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "porcentaje_logro fuera de [0,100]",
+                             nrow(fuera_0_100), n_ensayos, "alta",
+                             "Valor imposible para un porcentaje; revisar fórmula de cálculo o error de carga en el origen.")
+
+exportar_flag(fuera_0_100, "ensayos_porcentaje_fuera_de_rango")
+
+ceros_ens <- ensayos %>% filter(porcentaje_logro == 0)
+cat("\nFilas con porcentaje_logro == 0:", nrow(ceros_ens),
+    sprintf("(%.2f%%)\n", 100 * nrow(ceros_ens) / n_ensayos))
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "porcentaje_logro == 0",
+                             nrow(ceros_ens), n_ensayos, "baja/media",
+                             "Puede ser un resultado real (0 respuestas correctas) o un estudiante que no rindió; revisar contexto.")
+```
+
+## Outliers estadísticos (método IQR, por grupo agno-nivel-area)
+
+```{r ens-outliers-iqr}
+outliers_ens <- ensayos %>%
+  filter(porcentaje_logro >= 0, porcentaje_logro <= 100) %>%
+  group_by(agno, nivel, area) %>%
+  mutate(
+    q1 = quantile(porcentaje_logro, .25),
+    q3 = quantile(porcentaje_logro, .75),
+    iqr = q3 - q1,
+    lim_inf = q1 - 1.5 * iqr,
+    lim_sup = q3 + 1.5 * iqr,
+    es_outlier = porcentaje_logro < lim_inf | porcentaje_logro > lim_sup
+  ) %>%
+  ungroup() %>%
+  filter(es_outlier)
+
+cat("Outliers IQR detectados (dentro del rango 0-100):", nrow(outliers_ens),
+    sprintf("(%.2f%%)\n", 100 * nrow(outliers_ens) / n_ensayos))
+
+tabla(outliers_ens %>%
+        select(agno, id_colegio, curso, area, nivel, porcentaje_logro, lim_inf, lim_sup) %>%
+        head(200))
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "Outliers IQR (por agno-nivel-area)",
+                             nrow(outliers_ens), n_ensayos, "baja/media",
+                             "Outliers estadísticos dentro de su grupo; revisar antes de usar como feature.")
+
+exportar_flag(outliers_ens, "ensayos_outliers_iqr")
+```
+
+## Consistencia del campo `curso`
+
+Se observan valores de `curso` que incluyen texto adicional del colegio
+(p. ej. `"4° Básico A - COLEGIO SAN JOSÉ DE LAMPA"`), lo que rompe la
+homogeneidad del campo si se usa para agrupar por letra de curso.
+
+```{r ens-curso-check}
+cursos_con_guion <- ensayos %>% filter(str_detect(curso, " - "))
+cat("Filas con 'curso' que incluye texto extra (patrón ' - '):", nrow(cursos_con_guion), "\n")
+cat("Valores únicos de curso involucrados:\n")
+print(unique(cursos_con_guion$curso))
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana", "curso con texto adicional (nombre de colegio)",
+                             nrow(cursos_con_guion), n_ensayos, "baja",
+                             "Estandarizar curso (extraer solo letra/nivel) antes de usarlo como variable categórica.")
+
+exportar_flag(cursos_con_guion, "ensayos_curso_con_texto_extra")
+```
+
+## Visualización de distribuciones
+
+```{r ens-viz-box, fig.height=6}
+ensayos %>%
+  filter(porcentaje_logro >= 0, porcentaje_logro <= 100) %>%
+  ggplot(aes(x = factor(agno), y = porcentaje_logro, fill = area)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  facet_wrap(~ nivel) +
+  labs(title = "Distribución de porcentaje_logro por año, nivel y área (0-100 recortado)",
+       x = "Año", y = "% Logro", fill = "Área") +
+  theme_minimal()
+```
+
+```{r ens-viz-tipo}
+ensayos %>%
+  filter(porcentaje_logro >= 0, porcentaje_logro <= 100) %>%
+  ggplot(aes(x = tipo_evaluacion, y = porcentaje_logro, fill = tipo_evaluacion)) +
+  geom_boxplot(outlier.alpha = 0.3) +
+  facet_wrap(~ agno) +
+  labs(title = "% Logro por tipo de evaluación y año", x = NULL, y = "% Logro") +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_text(angle = 20, hjust = 1))
+```
+
+## Cobertura por año/nivel/área
+
+```{r ens-cobertura}
+cobertura_ens <- ensayos %>%
+  group_by(agno, nivel, area) %>%
+  summarise(n_filas = n(),
+            n_colegios = n_distinct(id_colegio),
+            n_estudiantes = n_distinct(id_usuario_curso),
+            .groups = "drop") %>%
+  arrange(nivel, area, agno)
+
+tabla(cobertura_ens)
+```
+
+---
+
+# Parte 4: Outliers multivariados (Isolation Forest)
+
+Los chequeos IQR anteriores son **univariados**: miran `promedio_simce` o
+`porcentaje_logro` de a una variable a la vez, dentro de su grupo. Pero un
+registro puede ser individualmente normal en cada variable por separado y
+aun así ser una combinación anómala (p. ej. un colegio con lenguaje y
+matemática ambos "normales" en su rango, pero con una diferencia entre ambos
+completamente atípica; o un estudiante con un `porcentaje_logro` alto pero un
+`n_evaluacion` que no calza con ese patrón).
+
+Para esto se usa **Isolation Forest** (paquete `isotree`): un método de
+ensamble que no asume una distribución particular y funciona bien con varias
+variables a la vez. Aísla cada observación mediante particiones aleatorias
+sucesivas; las observaciones anómalas requieren, en promedio, menos
+particiones para quedar aisladas, lo que se traduce en un **score de anomalía
+entre 0 y 1** (más cercano a 1 = más anómalo). Se usa un umbral de `0.6` como
+punto de partida para marcar candidatos a revisión; es un valor a calibrar
+según cuántos casos quieras revisar manualmente.
+
+## 4.1 `resultados_simce_rbd`: relación lenguaje-matemática por colegio
+
+Se arma una tabla ancha (una fila por `agno`-`grado`-`rbd`, con columnas
+`lenguaje` y `matematica`) y se ajusta un Isolation Forest **por grado**,
+para detectar colegios cuya combinación de puntajes en ambas áreas es atípica
+respecto al resto de colegios de su mismo grado.
+
+```{r res-isoforest}
+set.seed(123)
+
+resultados_wide <- resultados %>%
+  filter(!is.na(promedio_simce)) %>%
+  distinct(agno, grado, rbd, area, .keep_all = TRUE) %>%
+  pivot_wider(id_cols = c(agno, grado, rbd), names_from = area, values_from = promedio_simce) %>%
+  filter(!is.na(lenguaje), !is.na(matematica))
+
+ajustar_iforest <- function(df, vars, ntrees = 100, sample_size = 256) {
+  mat <- df %>% select(all_of(vars)) %>% as.matrix()
+  n_muestra <- min(sample_size, nrow(mat))
+  modelo <- isolation.forest(mat, ntrees = ntrees, sample_size = n_muestra,
+                              ndim = length(vars), seed = 123)
+  predict(modelo, mat, type = "score")
+}
+
+resultados_iso <- resultados_wide %>%
+  group_by(agno, grado) %>%
+  filter(n() >= 20) %>%  # el modelo necesita un mínimo de observaciones por grupo
+  mutate(score_anomalia = ajustar_iforest(cur_data(), c("lenguaje", "matematica"))) %>%
+  ungroup() %>%
+  arrange(desc(score_anomalia))
+
+umbral_res <- 0.7
+outliers_res_iso <- resultados_iso %>% filter(score_anomalia > umbral_res)
+
+cat("Colegios evaluados:", nrow(resultados_iso), "\n")
+cat("Marcados como anómalos (score >", umbral_res, "):", nrow(outliers_res_iso), "\n")
+
+tabla(outliers_res_iso %>% select(agno, grado, rbd, lenguaje, matematica, score_anomalia) %>% head(200))
+
+issues_log <- agregar_issue(issues_log, "resultados_simce_rbd",
+                             "Outliers multivariados Isolation Forest (lenguaje vs matematica)",
+                             nrow(outliers_res_iso), nrow(resultados_iso), "media",
+                             sprintf("Score de anomalía > %.1f; combinación lenguaje-matemática atípica dentro de su grado.", umbral_res))
+
+exportar_flag(outliers_res_iso, "resultados_outliers_isolation_forest")
+```
+
+```{r res-isoforest-viz, fig.height=6}
+ggplot(resultados_iso, aes(x = lenguaje, y = matematica, color = score_anomalia > umbral_res)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~ grado) +
+  scale_color_manual(values = c("FALSE" = "grey60", "TRUE" = "red"),
+                      labels = c("Normal", "Anómalo"), name = NULL) +
+  labs(title = "Isolation Forest: relación lenguaje-matemática por colegio",
+       subtitle = "Puntos en rojo: combinación atípica según el modelo",
+       x = "Puntaje lenguaje", y = "Puntaje matemática") +
+  theme_minimal()
+```
+
+## 4.2 `ensayos_santillana`: patrón de rendimiento por estudiante/intento
+
+Se ajusta Isolation Forest por grupo (`agno`, `nivel`, `area`) usando como
+variables `porcentaje_logro` y `n_evaluacion`, más una variable binaria que
+indica si el tipo de evaluación fue "Ensayo Simce". Esto permite detectar,
+por ejemplo, intentos con un `porcentaje_logro` inconsistente con el número
+de evaluación en curso (útil si se sospecha de datos duplicados, mal
+escalados, o cargados en el orden equivocado).
+
+```{r ens-isoforest}
+set.seed(123)
+
+ensayos_feat <- ensayos %>%
+  filter(porcentaje_logro >= 0, porcentaje_logro <= 100) %>%
+  mutate(es_ensayo_simce = as.integer(tipo_evaluacion == "Ensayo Simce"))
+
+ensayos_iso <- ensayos_feat %>%
+  group_by(agno, nivel, area) %>%
+  filter(n() >= 30) %>%
+  mutate(score_anomalia = ajustar_iforest(cur_data(), c("porcentaje_logro", "n_evaluacion", "es_ensayo_simce"))) %>%
+  ungroup() %>%
+  arrange(desc(score_anomalia))
+
+umbral_ens <- 0.6
+outliers_ens_iso <- ensayos_iso %>% filter(score_anomalia > umbral_ens)
+
+cat("Registros evaluados:", nrow(ensayos_iso), "\n")
+cat("Marcados como anómalos (score >", umbral_ens, "):", nrow(outliers_ens_iso), "\n")
+
+tabla(outliers_ens_iso %>%
+        select(agno, id_colegio, curso, area, nivel, tipo_evaluacion, n_evaluacion,
+               porcentaje_logro, score_anomalia) %>%
+        head(200))
+
+issues_log <- agregar_issue(issues_log, "ensayos_santillana",
+                             "Outliers multivariados Isolation Forest (porcentaje_logro, n_evaluacion, tipo_evaluacion)",
+                             nrow(outliers_ens_iso), nrow(ensayos_iso), "media",
+                             sprintf("Score de anomalía > %.1f dentro de su grupo agno-nivel-area.", umbral_ens))
+
+exportar_flag(outliers_ens_iso, "ensayos_outliers_isolation_forest")
+```
+
+```{r ens-isoforest-viz}
+ggplot(ensayos_iso, aes(x = n_evaluacion, y = porcentaje_logro, color = score_anomalia > umbral_ens)) +
+  geom_jitter(alpha = 0.4, width = 0.15) +
+  facet_wrap(~ nivel) +
+  scale_color_manual(values = c("FALSE" = "grey60", "TRUE" = "red"),
+                      labels = c("Normal", "Anómalo"), name = NULL) +
+  labs(title = "Isolation Forest: porcentaje_logro vs n_evaluacion",
+       subtitle = "Puntos en rojo: combinación atípica según el modelo",
+       x = "N° de evaluación", y = "% Logro") +
+  theme_minimal()
+```
+
+**Nota:** a diferencia del IQR, estos scores no dan un "sí/no" definitivo:
+el umbral (`0.6` en ambos casos) es una elección práctica para priorizar
+revisión manual, no un criterio estadístico exacto. Si el volumen de casos
+marcados es muy alto o muy bajo, ajusta el umbral y vuelve a correr.
+
+---
+
+# Log consolidado de issues
+
+```{r log-final}
+issues_log <- issues_log %>% arrange(dataset, desc(pct_del_total))
+tabla(issues_log)
+
+exportar_flag(issues_log, "issues_log_consolidado")
+```
+
+Todos los subconjuntos de filas marcadas quedaron exportados en la carpeta
+`` `r carpeta_salida` ``, listos para inspección manual o para decidir
+reglas de limpieza (excluir, recodificar a NA, o corregir) antes de alimentar
+el modelo.
+
+## Recomendaciones generales
+
+- **`promedio_simce == 0`** y **`porcentaje_logro fuera de [0,100]`**: son los
+  hallazgos de mayor severidad; muy probablemente son errores y no deberían
+  entrar al modelo tal como están.
+- **Duplicados**: decidir una regla explícita (quedarse con el último registro,
+  promediar, o investigar el origen) en vez de dejar que dupliquen peso en el
+  modelo.
+- **`rbd` vs `rbd_revisado`**: usar `rbd_revisado` como llave de cruce, y
+  documentar cuántos registros quedan sin RBD utilizable.
+- **Outliers IQR**: no eliminar automáticamente; son candidatos a revisión
+  manual, ya que en datos educacionales pueden reflejar variabilidad real
+  entre cursos pequeños.

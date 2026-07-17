@@ -21,6 +21,10 @@ diccionario_rbd <- ruta_data_intermedia %>%
 ensayos_santillana <- ensayos_santillana0 %>% 
   left_join(diccionario_rbd, by = 'id_colegio')
 
+ensayos_santillana %>%
+  select(-evaluacion, -colegio, -nombre) |> 
+  write_csv('ensayos_santillana.csv')
+
 # nombres_unicos <- unique(ensayos_santillana$nombre %>% tolower() %>% str_squish())
 # nombres_unicos_select <- nombres_unicos
 # 
@@ -46,8 +50,8 @@ simce_rbd <- simce0_rbd %>%
                values_to = 'promedio_simce') %>% 
   mutate(area = ifelse(str_detect(area, 'lect'), 'lenguaje', 'matematica'))
 
-simce_rbd %>% 
-  write_csv('resultados_simce_rbd.csv')
+# simce_rbd %>% 
+#   write_csv('resultados_simce_rbd.csv')
 
 # Estadística descriptiva básica:
 ensayos_santillana %>% count(agno)

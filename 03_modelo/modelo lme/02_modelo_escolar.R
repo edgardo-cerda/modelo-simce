@@ -142,6 +142,32 @@ p <- ggplot(diag_plot_data, aes(observado, predicho)) +
 
 ggsave(dir_salidas %>% file.path("diagnostico_observado_vs_predicho.png"), p, width = 8, height = 6)
 
+diag_plot_data2 <- map_dfr(names(modelos), function(clave) {
+  partes <- str_split(clave, "_", n = 2)[[1]]
+  g <- partes[1]; a <- partes[2]
+  datos_grupo <- school_model_data %>% filter(grado == g, area == a, agno == anio_test)
+  tibble(
+    grado = g, area = a,
+    promedio_ensayo = datos_grupo$mean_logro ,
+    observado = datos_grupo$promedio_simce,
+    predicho  = predict(modelos[[clave]], newdata = datos_grupo)
+  )
+})
+
+p2 <- diag_plot_data2 |> 
+  pivot_longer(cols = c(observado, predicho),
+               names_to = 'variable',
+               values_to = 'valor') |> 
+  ggplot(aes(x= promedio_ensayo, y = valor, color = variable)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  facet_wrap(~ grado + area, scales = "free") +
+  labs(
+    title = paste("Colegios: Promedio ensayo vs. SIMCE predicho -", anio_test),
+    x = "Promedio ensayo", y = "SIMCE predicho"
+  ) +
+  theme_minimal()
+
 # Diferencias promedio entre observado y predicho:
 diag_plot_data %>% 
   mutate(diferencia = predicho - observado) %>%
