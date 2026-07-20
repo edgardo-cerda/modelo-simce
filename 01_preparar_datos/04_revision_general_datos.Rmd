@@ -201,19 +201,41 @@ ensayos %>%
 
 ```{r ens-progresion}
 ensayos %>%
-  group_by(agno, grado, area, n_evaluacion) %>%
-  summarise(media = mean(porcentaje_logro, na.rm = TRUE), n = n(), .groups = "drop") %>%
-  ggplot(aes(x = n_evaluacion, y = media, color = area,
-             linetype = factor(agno), group = interaction(agno, area))) +
-  geom_line(linewidth = .8) + geom_point() +
-  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
-  scale_color_manual(values = pal_area) +
-  scale_x_discrete(breaks = 1:6) +
-  labs(title = "Promedio del % de logro según número de evaluación",
-       subtitle = "¿Mejoran los resultados entre aplicaciones sucesivas dentro del año?",
-       x = "N° de evaluación en el año", y = "% de logro promedio",
-       color = "Área", linetype = "Año")
+  mutate(evaluacion = paste0(tipo_evaluacion, ' - ', apellido_evaluacion)) %>% 
+  ggplot(aes(y = evaluacion, x = porcentaje_logro)) +
+  geom_line(linewidth = .8) + 
+  geom_point() +
+  facet_wrap(grado~area, scales = 'free_y') +
+  geom_boxplot()
 ```
+
+
+## Comparación entre evaluaciones en general
+
+```{r ens-progresion}
+ensayos %>%
+  mutate(evaluacion = paste0(tipo_evaluacion, '-',n_evaluacion)) %>% 
+  group_by(evaluacion, tipo_evaluacion, n_evaluacion, grado, area, agno) %>% 
+  summarise(promedio = mean(porcentaje_logro, na.rm = TRUE),
+            p25 = quantile(porcentaje_logro, probs = .25, na.rm = TRUE),
+            p75 = quantile(porcentaje_logro, probs = .75, na.rm = TRUE),
+            .groups = 'drop') %>%
+  arrange(tipo_evaluacion, n_evaluacion) %>% 
+  mutate(agno = factor(agno)) %>% 
+  ggplot(aes(y = promedio, 
+             color = agno,
+             fill = agno,
+             x = fct_rev(evaluacion),
+             group = interaction(grado, area, agno))) +
+  geom_line(linewidth = .8) + 
+  geom_point() +
+  geom_ribbon(aes(ymin = p25, ymax = p75), alpha = 0.2)+
+  facet_wrap(grado~area, scales = 'free_x') +
+  scale_y_continuous(limits = c(0, 100))+
+  coord_flip()
+
+```
+
 # SIMCE a nivel colegio (RBD)
 
 Los **valores 0 de `promedio_simce` se tratan como faltantes** (la escala SIMCE parte alrededor de 100 puntos).
