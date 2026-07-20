@@ -27,17 +27,22 @@ library(knitr)
 
 theme_set(theme_minimal(base_size = 12))
 pal_area <- c(lenguaje = "#2C7FB8", matematica = "#D95F02")
+pal_fuente <- c("SIMCE" = "#1B9E77", "Ensayos" = "#7570B3")
+
+GRADOS <- c("2m", "4b")
+lab_grado <- c("4b" = "4° Básico", "2m" = "2° Medio")
+
 ```
 
 # Objetivo y fuentes de datos
 
-Este reporte entrega un panorama general y un diagnóstico de calidad/consistencia de tres fuentes:
+Este reporte entrega un panorama general y un diagnóstico de calidad/consistencia de tres fuentes actualizadas, **restringido a los grados 2° Medio (2m) y 4° Básico (4b)**:
 
-1. **Ensayos Santillana** (`ensayos_santillana.csv`): resultados a grado de *alumno-evaluación* de pruebas de preparación y ensayos SIMCE (porcentaje de logro, 0–100).
-2. **SIMCE a grado colegio** (`resultados_simce_rbd.csv`): promedio SIMCE por RBD, año, grado y área (escala SIMCE, ~100–400 puntos).
-3. **SIMCE a grado alumno** (`consolidado_datos_simce_alu.parquet`): puntajes individuales de matemática y lectura, con error de medición (`eem_*`) y estándar de aprendizaje (`eda_*`).
+1. **Ensayos Santillana** (`consolidado_ensayo_simce.parquet`): resultados a nivel de *alumno-evaluación* (porcentaje de logro, 0–100).
+2. **SIMCE a nivel colegio** (`consolidado_datos_simce_rbd.parquet`): promedio SIMCE por RBD, año, grado y área, ahora con metadatos del establecimiento (comuna, dependencia, grupo socioeconómico, matrícula evaluada `nalu`).
+3. **SIMCE a nivel alumno** (`consolidado_datos_simce_alu.parquet`): puntajes individuales de matemática y lectura, con error de medición (`eem_*`) y estándar de aprendizaje (`eda_*`).
 
-Los ejes de análisis son: (a) distribuciones y promedios por categoría y año, (b) consistencia entre fuentes, (c) detección de posibles errores de datos, y (d) análisis complementarios (progresión entre ensayos, validez predictiva del ensayo respecto del SIMCE, brechas entre áreas).
+Respecto de la versión anterior, la fuente corrigió (i) la duplicación de una base SIMCE (2° medio 2024) y (ii) la lectura de separadores decimales que multiplicaba por 100 los puntajes 2024–2025. Este reporte **verifica ambas correcciones** y detecta un residuo menor del problema de decimales (sección de errores).
 
 # Carga de datos
 
@@ -65,23 +70,64 @@ tibble(
 ) %>% kable(caption = "Dimensiones de las fuentes")
 ```
 
-## Cobertura por año, grado/grado y área
 
-```{r cobertura}
-ensayos %>% count(agno, grado) %>%
-  pivot_wider(names_from = grado, values_from = n, values_fill = 0) %>%
-  kable(caption = "Ensayos: registros alumno-evaluación por año y grado")
+## Verificación de las correcciones de la fuente
 
-simce_rbd %>% count(agno, grado) %>%
-  pivot_wider(names_from = grado, values_from = n, values_fill = 0) %>%
-  kable(caption = "SIMCE RBD: registros por año y grado")
+```{r verificacion}
+# 1) Duplicados en la base RBD (antes: ~6.000 en 2m-2024)
+dup_rbd <- sum(duplicated(simce_rbd[, c("agno", "grado", "rbd", "area")]))
 
-simce_alu %>% count(agno, grado) %>%
-  pivot_wider(names_from = grado, values_from = n, values_fill = 0) %>%
-  kable(caption = "SIMCE alumno: registros por año y grado")
+# 2) Escala de puntajes de alumno (antes: mediana ~19.500 en 2024-2025)
+escala <- simce_alu %>%
+  group_by(agno) %>%
+  summarise(mediana_mate = median(ptje_mate, na.rm = TRUE),
+            max_mate = max(ptje_mate, na.rm = TRUE),
+            pct_sobre_1000 = mean(ptje_mate > 1000, na.rm = TRUE),
+            pct_bajo_100 = mean(ptje_mate < 100, na.rm = TRUE),
+            .groups = "drop")
+
+kable(escala %>% mutate(across(starts_with("pct"), ~percent(.x, .01)),
+                        across(c(mediana_mate, max_mate), ~round(.x, 1))),
+      caption = sprintf("Verificación de escala (duplicados clave agno-grado-rbd-area: %d)", dup_rbd))
 ```
 
-**Lectura:** la cobertura de grados no es homogénea entre años (p. ej., 6° básico solo aparece en 2024 y 8° básico solo en 2025 en la base RBD). Los ensayos cubren solo 4b y 2m, por lo que la comparación entre fuentes se restringe a esos gradoes.
+Ambas correcciones se confirman: no hay duplicados y ya no existen puntajes > 1.000. Sin embargo, en 2024 persiste un ~3% de puntajes **menores a 100** (imposibles en la escala SIMCE), residuo del problema de decimales que se corrige a continuación.
+
+```{r correccion-residual}
+# Los valores < 100 en 2024 son órdenes de magnitud demasiado pequeños
+# (ej.: 23.78 en vez de 237.8; 1.54 en vez de 154). Se reescalan multiplicando
+# por 10 hasta entrar al rango plausible de la escala SIMCE (>= 100).
+reescala <- function(x) {
+  for (i in 1:2) x <- if_else(!is.na(x) & x < 100, x * 10, x)
+  x
+}
+
+n_corr_mate <- sum(simce_alu$ptje_mate < 100, na.rm = TRUE)
+n_corr_lect <- sum(simce_alu$ptje_lect < 100, na.rm = TRUE)
+
+simce_alu <- simce_alu %>%
+  mutate(ptje_mate = reescala(ptje_mate),
+         ptje_lect = reescala(ptje_lect))
+
+tibble(variable = c("ptje_mate", "ptje_lect"),
+       registros_reescalados = comma(c(n_corr_mate, n_corr_lect))) %>%
+  kable(caption = "Corrección residual aplicada (valores < 100 llevados a escala SIMCE)")
+```
+
+## Cobertura por año, grado y área
+
+```{r cobertura}
+bind_rows(
+  ensayos   %>% count(agno, grado) %>% mutate(fuente = "Ensayos"),
+  simce_rbd %>% count(agno, grado) %>% mutate(fuente = "SIMCE RBD"),
+  simce_alu %>% count(agno, grado) %>% mutate(fuente = "SIMCE alumno")
+) %>%
+  unite(col, fuente, grado) %>%
+  pivot_wider(names_from = col, values_from = n, values_fill = 0) %>%
+  kable(caption = "Registros por año, fuente y grado")
+```
+
+**Lectura:** el SIMCE cubre 2022–2025 y los ensayos 2023–2025, con fuerte crecimiento del volumen de ensayos en 2025. El traslape 2023–2025 es la ventana para los análisis de consistencia y evolución conjunta.
 
 # Ensayos Santillana
 
@@ -90,7 +136,8 @@ simce_alu %>% count(agno, grado) %>%
 ```{r ens-dist}
 ensayos %>%
   ggplot(aes(porcentaje_logro)) +
-  geom_histogram(binwidth = 2.5, fill = "#2C7FB8", color = "white") +
+  geom_histogram(binwidth = 5, fill = "#7570B3", color = "white") +
+  scale_x_continuous(breaks = 10*0:15, limits = c(0, 150)) +
   geom_vline(xintercept = 100, linetype = "dashed", color = "red") +
   labs(title = "Distribución del porcentaje de logro (todas las evaluaciones)",
        x = "% de logro", y = "N° de registros")
@@ -102,9 +149,9 @@ ensayos %>%
             de = sd(porcentaje_logro, na.rm = TRUE),
             p10 = quantile(porcentaje_logro, .10, na.rm = TRUE),
             p90 = quantile(porcentaje_logro, .90, na.rm = TRUE),
-            pct_cero = mean(porcentaje_logro == 0, na.rm = TRUE),
-            pct_sobre_100 = mean(porcentaje_logro > 100, na.rm = TRUE)) %>%
-  mutate(across(where(is.numeric), ~round(.x, 3))) %>%
+            pct_cero = percent(mean(porcentaje_logro == 0, na.rm = TRUE), .1),
+            n_sobre_100 = sum(porcentaje_logro > 100, na.rm = TRUE)) %>%
+  mutate(across(where(is.numeric), ~round(.x, 2))) %>%
   kable(caption = "Estadísticos del % de logro")
 ```
 
@@ -115,144 +162,156 @@ ensayos %>%
   filter(porcentaje_logro <= 100) %>%
   ggplot(aes(x = factor(agno), y = porcentaje_logro, fill = area)) +
   geom_boxplot(outlier.alpha = .05) +
-  facet_grid(grado~., labeller = labeller(grado = c("4b" = "4° Básico", "2m" = "2° Medio"))) +
+  facet_grid(grado~., labeller = labeller(grado = lab_grado)) +
   scale_fill_manual(values = pal_area) +
   labs(title = "% de logro por año, área y grado", x = "Año", y = "% de logro", fill = "Área")
 
 ensayos %>%
   group_by(agno, grado, area) %>%
-  summarise(media = mean(porcentaje_logro, na.rm = TRUE),
-            mediana = median(porcentaje_logro, na.rm = TRUE),
+  summarise(media = round(mean(porcentaje_logro, na.rm = TRUE), 1),
+            mediana = round(median(porcentaje_logro, na.rm = TRUE), 1),
             n = n(), .groups = "drop") %>%
-  mutate(across(c(media, mediana), ~round(.x, 1))) %>%
   kable(caption = "Promedio y mediana del % de logro por año, grado y área")
 ```
 
-## Progresión entre ensayos sucesivos (n_evaluacion)
+**Lectura:** destaca el bajo logro de **matemática en 2° medio** (medias en torno a 32–40%), muy por debajo de lenguaje del mismo grado y de ambas áreas en 4° básico. Esto puede reflejar tanto menor dominio real como mayor dificultad relativa de los instrumentos de ese nivel; la comparación con SIMCE (sección de consistencia) ayuda a distinguirlo.
 
-Un uso natural de los ensayos es monitorear si los estudiantes mejoran entre aplicaciones sucesivas dentro del año.
+## Progresión entre ensayos sucesivos (n_evaluacion)
 
 ```{r ens-progresion}
 ensayos %>%
   group_by(agno, grado, area, n_evaluacion) %>%
   summarise(media = mean(porcentaje_logro, na.rm = TRUE), n = n(), .groups = "drop") %>%
-  ggplot(aes(n_evaluacion, media, color = area,
+  ggplot(aes(x = n_evaluacion, y = media, color = area,
              linetype = factor(agno), group = interaction(agno, area))) +
   geom_line(linewidth = .8) + geom_point() +
-  facet_wrap(~grado, labeller = labeller(grado = c("4b" = "4° Básico", "2m" = "2° Medio"))) +
+  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
   scale_color_manual(values = pal_area) +
+  scale_x_discrete(breaks = 1:6) +
   labs(title = "Promedio del % de logro según número de evaluación",
-       subtitle = "¿Mejoran los resultados entre aplicaciones sucesivas?",
+       subtitle = "¿Mejoran los resultados entre aplicaciones sucesivas dentro del año?",
        x = "N° de evaluación en el año", y = "% de logro promedio",
        color = "Área", linetype = "Año")
 ```
 
-**Precaución interpretativa:** los cambios entre aplicaciones pueden reflejar tanto aprendizaje como diferencias de dificultad entre instrumentos (`apellido_evaluacion` distinto) y cambios de composición (colegios que solo rinden algunas aplicaciones). Conviene complementar con seguimiento del mismo `id_usuario_curso`.
+**Precaución interpretativa:** los cambios entre aplicaciones mezclan aprendizaje, diferencias de dificultad entre instrumentos (`apellido_evaluacion`) y cambios de composición (colegios que solo rinden algunas aplicaciones). Para monitoreo fino conviene seguir al mismo `id_usuario_curso` entre aplicaciones.
 
-```{r ens-tipo}
+
+## Comparación entre tipo de evaluaciones
+
+```{r ens-progresion}
 ensayos %>%
-  group_by(tipo_evaluacion, agno) %>%
-  summarise(media = round(mean(porcentaje_logro, na.rm = TRUE), 1),
-            n = n(), .groups = "drop") %>%
-  kable(caption = "Promedio por tipo de evaluación y año (los 'Ensayo Simce' solo existen en 2023)")
+  group_by(agno, grado, area, n_evaluacion) %>%
+  summarise(media = mean(porcentaje_logro, na.rm = TRUE), n = n(), .groups = "drop") %>%
+  ggplot(aes(x = n_evaluacion, y = media, color = area,
+             linetype = factor(agno), group = interaction(agno, area))) +
+  geom_line(linewidth = .8) + geom_point() +
+  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
+  scale_color_manual(values = pal_area) +
+  scale_x_discrete(breaks = 1:6) +
+  labs(title = "Promedio del % de logro según número de evaluación",
+       subtitle = "¿Mejoran los resultados entre aplicaciones sucesivas dentro del año?",
+       x = "N° de evaluación en el año", y = "% de logro promedio",
+       color = "Área", linetype = "Año")
 ```
+# SIMCE a nivel colegio (RBD)
 
-# SIMCE a grado colegio (RBD)
+Los **valores 0 de `promedio_simce` se tratan como faltantes** (la escala SIMCE parte alrededor de 100 puntos).
+
+```{r rbd-prep}
+simce_rbd <- simce_rbd %>%
+  mutate(promedio_valido = if_else(promedio_simce > 0, promedio_simce, NA_real_),
+         dependencia = factor(cod_depe2, levels = 1:4,
+                              labels = c("Municipal", "Part. subvencionado",
+                                         "Part. pagado", "Serv. Local (SLEP)")),
+         gse = factor(cod_grupo, levels = 1:5,
+                      labels = c("Bajo", "Medio bajo", "Medio", "Medio alto", "Alto")))
+```
 
 ## Distribución del promedio SIMCE
 
-En esta base los **valores 0 se tratan como dato faltante** (un promedio SIMCE real no puede ser 0; la escala parte alrededor de 100 puntos).
-
 ```{r rbd-dist}
-simce_rbd <- simce_rbd %>%
-  mutate(promedio_valido = if_else(promedio_simce > 0, promedio_simce, NA_real_))
-
 simce_rbd %>%
   filter(!is.na(promedio_valido)) %>%
   ggplot(aes(promedio_valido, fill = area)) +
   geom_density(alpha = .5) +
   scale_fill_manual(values = pal_area) +
-  facet_wrap(~grado) +
+  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
   labs(title = "Distribución del promedio SIMCE por grado y área (RBD)",
        x = "Promedio SIMCE", y = "Densidad", fill = "Área")
 ```
 
 ## Tendencia por año
 
+Se reporta el promedio **ponderado por alumnos evaluados (`nalu`)**, que representa mejor al estudiante promedio que el promedio simple entre colegios.
+
 ```{r rbd-anio}
 simce_rbd %>%
+  filter(!is.na(promedio_valido)) %>%
   group_by(agno, grado, area) %>%
-  summarise(media = mean(promedio_valido, na.rm = TRUE),
-            n_colegios = n_distinct(rbd), .groups = "drop") %>%
-  ggplot(aes(agno, media, color = area, group = area)) +
+  summarise(media_pond = weighted.mean(promedio_valido, nalu, na.rm = TRUE),
+            .groups = "drop") %>%
+  ggplot(aes(agno, media_pond, color = area, group = area)) +
   geom_line(linewidth = .9) + geom_point(size = 2) +
-  facet_wrap(~grado, scales = "free_y") +
+  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
   scale_color_manual(values = pal_area) +
-  labs(title = "Promedio SIMCE (media entre colegios) por año, grado y área",
+  labs(title = "Promedio SIMCE ponderado por alumnos, según año, grado y área",
        x = "Año", y = "Promedio SIMCE", color = "Área")
+```
+
+## Brechas por dependencia y grupo socioeconómico
+
+Los metadatos nuevos permiten dimensionar las brechas estructurales del sistema (etiquetas según codificación estándar SIMCE; verificar con el diccionario oficial de la Agencia de Calidad).
+
+```{r rbd-brechas, fig.height=6}
+simce_rbd %>%
+  filter(!is.na(promedio_valido), !is.na(gse)) %>%
+  ggplot(aes(gse, promedio_valido, fill = area)) +
+  geom_boxplot(outlier.alpha = .1) +
+  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
+  scale_fill_manual(values = pal_area) +
+  labs(title = "Promedio SIMCE por grupo socioeconómico del colegio",
+       x = "Grupo socioeconómico", y = "Promedio SIMCE", fill = "Área")
 
 simce_rbd %>%
-  group_by(agno, grado, area) %>%
-  summarise(media = round(mean(promedio_valido, na.rm = TRUE), 1),
-            de = round(sd(promedio_valido, na.rm = TRUE), 1),
-            pct_faltante = round(mean(is.na(promedio_valido)), 3),
-            .groups = "drop") %>%
-  pivot_wider(names_from = area, values_from = c(media, de, pct_faltante)) %>%
-  kable(caption = "Resumen por año y grado (incluye proporción de datos faltantes/cero)")
+  filter(!is.na(promedio_valido), !is.na(dependencia)) %>%
+  group_by(grado, area, dependencia) %>%
+  summarise(media_pond = round(weighted.mean(promedio_valido, nalu, na.rm = TRUE), 1),
+            n_colegios = n_distinct(rbd), .groups = "drop") %>%
+  pivot_wider(names_from = dependencia, values_from = c(media_pond, n_colegios)) %>%
+  kable(caption = "Promedio SIMCE ponderado por dependencia administrativa")
 ```
 
-# SIMCE a grado alumno
+# SIMCE a nivel alumno
 
-## Detección y corrección de un error de escala en 2024–2025
-
-Los puntajes individuales presentan una anomalía severa: en 2024 y 2025 casi todos los valores superan 1.000 (mediana ~19.500), lo que es imposible en la escala SIMCE. El patrón es consistente con una **pérdida del separador decimal** (p. ej., 251,80 leído como 25180). Se verifica y corrige dividiendo por 100 los valores > 1000.
-
-```{r alu-escala}
-simce_alu %>%
-  group_by(agno) %>%
-  summarise(pct_mate_sobre_1000 = mean(ptje_mate > 1000, na.rm = TRUE),
-            pct_lect_sobre_1000 = mean(ptje_lect > 1000, na.rm = TRUE),
-            .groups = "drop") %>%
-  mutate(across(starts_with("pct"), ~percent(.x, .1))) %>%
-  kable(caption = "Proporción de puntajes > 1000 por año: el problema se concentra en 2024-2025")
-
-corrige_escala <- function(x) if_else(!is.na(x) & x > 1000, x / 100, x)
-
-simce_alu <- simce_alu %>%
-  mutate(ptje_mate_c = corrige_escala(ptje_mate),
-         ptje_lect_c = corrige_escala(ptje_lect))
-
-simce_alu %>%
-  select(agno, ptje_mate, ptje_mate_c) %>%
-  pivot_longer(-agno, names_to = "version", values_to = "ptje") %>%
-  filter(!is.na(ptje)) %>%
-  group_by(agno, version) %>%
-  summarise(media = round(mean(ptje), 1), mediana = round(median(ptje), 1),
-            max = round(max(ptje), 1), .groups = "drop") %>%
-  kable(caption = "Matemática: antes (ptje_mate) y después (ptje_mate_c) de la corrección")
-```
-
-Tras la corrección, todos los años quedan en el rango esperado (~100–480). *Este hallazgo debe reportarse al origen de los datos: lo correcto es corregir el proceso de carga, no solo parchar aquí.*
-
-## Distribuciones corregidas
+## Distribuciones por grado, año y área
 
 ```{r alu-dist, fig.height=6}
 simce_alu %>%
-  select(agno, grado, Matemática = ptje_mate_c, Lectura = ptje_lect_c) %>%
+  select(agno, grado, Matemática = ptje_mate, Lectura = ptje_lect) %>%
   pivot_longer(c(Matemática, Lectura), names_to = "area", values_to = "ptje") %>%
   filter(!is.na(ptje)) %>%
   ggplot(aes(ptje, fill = area)) +
   geom_density(alpha = .5) +
-  facet_grid(grado ~ agno) +
+  facet_grid(grado ~ agno, labeller = labeller(grado = lab_grado)) +
   scale_fill_manual(values = c(Lectura = "#2C7FB8", `Matemática` = "#D95F02")) +
-  labs(title = "Distribución de puntajes individuales por grado y año (corregidos)",
+  labs(title = "Distribución de puntajes individuales por grado y año",
        x = "Puntaje SIMCE", y = "Densidad", fill = "Área")
+
+simce_alu %>%
+  group_by(agno, grado) %>%
+  summarise(media_mate = round(mean(ptje_mate, na.rm = TRUE), 1),
+            media_lect = round(mean(ptje_lect, na.rm = TRUE), 1),
+            pct_na_mate = percent(mean(is.na(ptje_mate)), .1),
+            pct_na_lect = percent(mean(is.na(ptje_lect)), .1),
+            n = comma(n()), .groups = "drop") %>%
+  kable(caption = "Promedios individuales y proporción de puntajes faltantes")
 ```
 
 ## Estándares de aprendizaje (eda)
 
 ```{r alu-eda}
-etiquetas_eda <- c(`1` = "Insuficiente", `2` = "Elemental", `3` = "Adecuado")
+etiquetas_eda <- c("Insuficiente", "Elemental", "Adecuado")
 
 simce_alu %>%
   filter(!is.na(eda_mate)) %>%
@@ -260,7 +319,7 @@ simce_alu %>%
   group_by(agno, grado) %>% mutate(prop = n / sum(n)) %>% ungroup() %>%
   ggplot(aes(factor(agno), prop, fill = eda)) +
   geom_col(position = "fill") +
-  facet_wrap(~grado, nrow = 1) +
+  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
   scale_y_continuous(labels = percent) +
   scale_fill_manual(values = c("#D7301F", "#FDB863", "#1A9850")) +
   labs(title = "Matemática: distribución de estándares de aprendizaje por año y grado",
@@ -272,12 +331,12 @@ simce_alu %>%
 ```{r alu-corr}
 set.seed(1)
 muestra <- simce_alu %>%
-  filter(!is.na(ptje_mate_c), !is.na(ptje_lect_c)) %>%
+  filter(!is.na(ptje_mate), !is.na(ptje_lect)) %>%
   slice_sample(n = 50000)
 
-r_ml <- cor(muestra$ptje_mate_c, muestra$ptje_lect_c)
+r_ml <- cor(muestra$ptje_mate, muestra$ptje_lect)
 
-ggplot(muestra, aes(ptje_lect_c, ptje_mate_c)) +
+ggplot(muestra, aes(ptje_lect, ptje_mate)) +
   geom_hex(bins = 60) +
   geom_smooth(method = "lm", color = "red", se = FALSE) +
   scale_fill_viridis_c() +
@@ -289,37 +348,33 @@ ggplot(muestra, aes(ptje_lect_c, ptje_mate_c)) +
 
 ## SIMCE alumno agregado a RBD vs. base SIMCE-RBD
 
-Si ambas fuentes describen la misma medición, el promedio por colegio calculado desde la base de alumnos debería coincidir con `promedio_simce` de la base RBD.
-
 ```{r cons-alu-rbd}
 agg_alu <- simce_alu %>%
   group_by(agno, grado, rbd) %>%
-  summarise(matematica = mean(ptje_mate_c, na.rm = TRUE),
-            lenguaje = mean(ptje_lect_c, na.rm = TRUE),
-            n_alu = n(), .groups = "drop") %>%
+  summarise(matematica = mean(ptje_mate, na.rm = TRUE),
+            lenguaje = mean(ptje_lect, na.rm = TRUE),
+            n_alu_calc = n(), .groups = "drop") %>%
   pivot_longer(c(matematica, lenguaje), names_to = "area", values_to = "prom_alu") %>%
   filter(!is.nan(prom_alu))
 
-rbd_dedup <- simce_rbd %>%
+comparacion <- simce_rbd %>%
   filter(!is.na(promedio_valido)) %>%
-  distinct(agno, grado, rbd, area, .keep_all = TRUE)   # elimina duplicados detectados
-
-comparacion <- inner_join(agg_alu, rbd_dedup,
-                          by = c("agno", "grado", "rbd", "area")) %>%
+  select(agno, grado, rbd, area, promedio_valido, nalu) %>%
+  inner_join(agg_alu, by = c("agno", "grado", "rbd", "area")) %>%
   mutate(dif = prom_alu - promedio_valido)
 
 comparacion %>%
   group_by(agno, grado, area) %>%
   summarise(n_colegios = n(),
             correlacion = round(cor(prom_alu, promedio_valido), 3),
-            dif_media = round(mean(dif), 1),
-            dif_abs_mediana = round(median(abs(dif)), 1),
+            dif_media = round(mean(dif), 2),
+            dif_abs_mediana = round(median(abs(dif)), 2),
             pct_dif_mayor_10 = percent(mean(abs(dif) > 10), .1),
             .groups = "drop") %>%
   kable(caption = "Consistencia: promedio calculado desde alumnos vs. base RBD")
 
 comparacion %>%
-  filter(n_alu >= 10) %>%
+  filter(n_alu_calc >= 10) %>%
   ggplot(aes(promedio_valido, prom_alu)) +
   geom_point(alpha = .15, size = .7) +
   geom_abline(color = "red", linetype = "dashed") +
@@ -330,32 +385,31 @@ comparacion %>%
        x = "Promedio SIMCE (base RBD)", y = "Promedio desde base alumnos")
 ```
 
-**Lectura:** correlaciones cercanas a 1 y puntos alineados con la identidad indican que ambas bases provienen de la misma medición. Desviaciones sistemáticas (diferencia media distinta de 0) pueden deberse a que la base RBD promedie sobre otro universo de alumnos (p. ej., excluyendo ausentes o incluyendo alumnos sin puntaje) o a redondeos; colegios muy alejados de la diagonal merecen revisión caso a caso.
-
 ```{r cons-outliers}
 comparacion %>%
-  filter(abs(dif) > 20, n_alu >= 10) %>%
+  filter(abs(dif) > 10, n_alu_calc >= 10) %>%
   arrange(desc(abs(dif))) %>%
-  select(agno, grado, rbd, area, n_alu, prom_alu, promedio_valido, dif) %>%
+  select(agno, grado, rbd, area, n_alu_calc, nalu, prom_alu, promedio_valido, dif) %>%
   mutate(across(c(prom_alu, dif), ~round(.x, 1))) %>%
   head(20) %>%
-  kable(caption = "Top 20 colegios con mayor discrepancia absoluta (>20 pts, n≥10)")
+  kable(caption = "Top 20 colegios con mayor discrepancia absoluta (>10 pts, n≥10)")
 ```
 
-## Ensayos vs. SIMCE del mismo año (validez predictiva)
+**Lectura:** con las bases corregidas la consistencia es alta (correlaciones ~0,97+ y diferencia mediana bajo 1 punto). Las discrepancias residuales se explican mayormente por diferencias entre `nalu` (alumnos considerados por la Agencia) y los alumnos con puntaje presentes en la base individual.
 
-Se agregan los ensayos a grado colegio (promedio del % de logro por RBD, grado, área y año) y se cruzan con el promedio SIMCE del mismo año. Aunque están en escalas distintas, si el ensayo es informativo debería observarse una relación positiva clara.
+## Ensayos vs. SIMCE del mismo año (nivel colegio)
 
 ```{r cons-ens-simce}
 agg_ens <- ensayos %>%
   filter(!is.na(rbd_revisado), porcentaje_logro <= 100) %>%
-  mutate(rbd = suppressWarnings(as.integer(rbd_revisado)),
-         grado = grado) %>%
-  filter(!is.na(rbd)) %>%
+  mutate(rbd = as.integer(rbd_revisado)) %>%
   group_by(agno, grado, rbd, area) %>%
   summarise(logro_ensayo = mean(porcentaje_logro), n_reg = n(), .groups = "drop")
 
-ens_simce <- inner_join(agg_ens, rbd_dedup, by = c("agno", "grado", "rbd", "area"))
+ens_simce <- simce_rbd %>%
+  filter(!is.na(promedio_valido)) %>%
+  select(agno, grado, rbd, area, promedio_valido, gse, dependencia) %>%
+  inner_join(agg_ens, by = c("agno", "grado", "rbd", "area"))
 
 ens_simce %>%
   group_by(agno, grado, area) %>%
@@ -369,77 +423,159 @@ ens_simce %>%
   ggplot(aes(logro_ensayo, promedio_valido, color = area)) +
   geom_point(alpha = .25, size = .8) +
   geom_smooth(method = "lm", se = FALSE) +
-  facet_grid(grado ~ agno) +
+  facet_grid(grado ~ agno, labeller = labeller(grado = lab_grado)) +
   scale_color_manual(values = pal_area) +
-  labs(title = "Ensayos Santillana vs. SIMCE del mismo año (grado colegio)",
+  labs(title = "Ensayos Santillana vs. SIMCE del mismo año (nivel colegio)",
        subtitle = "Colegios con al menos 20 registros de ensayo",
        x = "% de logro promedio en ensayos", y = "Promedio SIMCE", color = "Área")
 ```
 
-**Lectura:** una correlación positiva moderada-alta respalda el uso de los ensayos como señal temprana del desempeño SIMCE. Correlaciones bajas en alguna celda año-grado-área sugieren problemas de emparejamiento de RBD, instrumentos poco alineados o muestras pequeñas por colegio. Recordar que 2025 en la base RBD es preliminar.
+**Lectura:** una correlación positiva moderada-alta respalda el uso de los ensayos como señal temprana del SIMCE. Correlaciones bajas en alguna celda año-grado-área sugieren emparejamiento de RBD deficiente, instrumentos poco alineados o pocas observaciones por colegio.
+
+# Evolución temporal: SIMCE vs. Ensayos
+
+Como las escalas son distintas (puntos SIMCE vs. % de logro), la evolución conjunta se analiza de dos maneras complementarias.
+
+## Series estandarizadas (z-score respecto del primer año común)
+
+Cada serie se expresa en desviaciones estándar respecto de su propio nivel y dispersión **entre colegios en 2023** (primer año con ambas fuentes). Así, ambas curvas parten comparables y los movimientos se leen en unidades de "desviaciones estándar entre colegios".
+
+```{r evolucion-z}
+serie_simce <- simce_rbd %>%
+  filter(!is.na(promedio_valido)) %>%
+  group_by(grado, area) %>%
+  mutate(mu0 = mean(promedio_valido[agno == 2023]),
+         sd0 = sd(promedio_valido[agno == 2023])) %>%
+  group_by(agno, grado, area) %>%
+  summarise(z = mean((promedio_valido - mu0) / sd0), .groups = "drop") %>%
+  mutate(fuente = "SIMCE")
+
+serie_ens <- agg_ens %>%
+  group_by(grado, area) %>%
+  mutate(mu0 = mean(logro_ensayo[agno == 2023]),
+         sd0 = sd(logro_ensayo[agno == 2023])) %>%
+  group_by(agno, grado, area) %>%
+  summarise(z = mean((logro_ensayo - mu0) / sd0), .groups = "drop") %>%
+  mutate(fuente = "Ensayos")
+
+bind_rows(serie_simce, serie_ens) %>%
+  filter(agno >= 2023) %>%
+  ggplot(aes(agno, z, color = fuente, group = fuente)) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_line(linewidth = .9) + geom_point(size = 2) +
+  facet_grid(grado ~ area, labeller = labeller(grado = lab_grado)) +
+  scale_color_manual(values = pal_fuente) +
+  labs(title = "Evolución de SIMCE y Ensayos, estandarizados respecto de 2023",
+       subtitle = "Promedio entre colegios, en desviaciones estándar (entre colegios) del año base",
+       x = "Año", y = "Z-score (base 2023)", color = "Fuente")
+```
+
+## Panel balanceado de colegios (control de composición)
+
+Las series anteriores mezclan colegios distintos cada año (la muestra Santillana creció mucho en 2024–2025), por lo que parte del movimiento puede ser cambio de composición. Aquí se restringe a los **colegios presentes en ambas fuentes en todos los años 2023–2025** para cada grado-área.
+
+```{r evolucion-panel}
+panel <- ens_simce %>%
+  group_by(grado, area, rbd) %>%
+  filter(all(2023:2025 %in% agno)) %>%
+  ungroup()
+
+panel %>%
+  distinct(grado, area, rbd) %>%
+  count(grado, area, name = "colegios_panel") %>%
+  kable(caption = "Tamaño del panel balanceado 2023-2025 por grado y área")
+
+panel_z <- panel %>%
+  group_by(grado, area) %>%
+  mutate(z_simce = (promedio_valido - mean(promedio_valido[agno == 2023])) /
+                    sd(promedio_valido[agno == 2023]),
+         z_ens   = (logro_ensayo - mean(logro_ensayo[agno == 2023])) /
+                    sd(logro_ensayo[agno == 2023])) %>%
+  group_by(agno, grado, area) %>%
+  summarise(SIMCE = mean(z_simce), Ensayos = mean(z_ens), .groups = "drop") %>%
+  pivot_longer(c(SIMCE, Ensayos), names_to = "fuente", values_to = "z")
+
+panel_z %>%
+  ggplot(aes(agno, z, color = fuente, group = fuente)) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_line(linewidth = .9) + geom_point(size = 2) +
+  facet_grid(grado ~ area, labeller = labeller(grado = lab_grado)) +
+  scale_color_manual(values = pal_fuente) +
+  labs(title = "Evolución en el panel balanceado de colegios (mismos colegios cada año)",
+       subtitle = "Z-scores respecto de 2023; aísla el efecto composición",
+       x = "Año", y = "Z-score (base 2023)", color = "Fuente")
+```
+
+## ¿El cambio en ensayos anticipa el cambio en SIMCE?
+
+Dentro del panel, se correlaciona el **cambio anual por colegio** en ambas medidas. Una correlación positiva indicaría que las variaciones de los ensayos capturan variaciones reales de desempeño y no solo ruido.
+
+```{r evolucion-cambios}
+cambios <- panel %>%
+  arrange(grado, area, rbd, agno) %>%
+  group_by(grado, area, rbd) %>%
+  mutate(d_simce = promedio_valido - lag(promedio_valido),
+         d_ens   = logro_ensayo - lag(logro_ensayo)) %>%
+  ungroup() %>%
+  filter(!is.na(d_simce))
+
+cambios %>%
+  group_by(grado, area) %>%
+  summarise(n_cambios = n(),
+            correlacion_cambios = round(cor(d_ens, d_simce), 3),
+            .groups = "drop") %>%
+  kable(caption = "Correlación entre el cambio anual del % de logro en ensayos y el cambio del promedio SIMCE (mismo colegio)")
+
+cambios %>%
+  ggplot(aes(d_ens, d_simce)) +
+  geom_point(alpha = .3, size = .8, color = "#7570B3") +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  geom_hline(yintercept = 0, color = "grey70") +
+  geom_vline(xintercept = 0, color = "grey70") +
+  facet_grid(grado ~ area, labeller = labeller(grado = lab_grado)) +
+  labs(title = "Cambio anual por colegio: ensayos vs. SIMCE",
+       x = "Δ % de logro en ensayos", y = "Δ promedio SIMCE")
+```
+
+**Lectura:** las correlaciones de *niveles* entre colegios suelen ser altas, pero las de *cambios* son típicamente mucho menores (ambas medidas tienen error de medición y los cambios anuales son pequeños relativos a ese error). Si la correlación de cambios es cercana a 0, los ensayos sirven para ordenar colegios pero no necesariamente para detectar mejoras año a año de un mismo colegio.
 
 # Posibles errores y problemas de calidad detectados
 
 ```{r errores}
-errores <- tribble(
-  ~fuente, ~problema, ~magnitud,
-  "SIMCE alumno", "Puntajes con escala x100 (separador decimal perdido) en 2024-2025",
-    percent(mean(simce_alu$ptje_mate > 1000, na.rm = TRUE), .1),
-  "SIMCE alumno", "Puntaje matemática faltante",
-    percent(mean(is.na(simce_alu$ptje_mate)), .1),
-  "SIMCE alumno", "Puntaje lectura faltante",
-    percent(mean(is.na(simce_alu$ptje_lect)), .1),
+tribble(
+  ~fuente, ~problema, ~magnitud, ~estado,
+  "SIMCE alumno", "Escala x100 (2024-2025)", "—", "Corregido en la fuente ✔",
+  "SIMCE RBD", "Duplicados 2m-2024", "—", "Corregido en la fuente ✔",
+  "SIMCE alumno", "Residuo de decimales: puntajes < 100 en 2024",
+    comma(n_corr_mate + n_corr_lect), "Reescalado en este reporte (x10/x100)",
   "SIMCE RBD", "Promedios = 0 (tratados como faltantes)",
-    comma(sum(simce_rbd$promedio_simce == 0, na.rm = TRUE)),
+    comma(sum(simce_rbd$promedio_simce == 0, na.rm = TRUE)), "Excluidos del análisis",
   "SIMCE RBD", "Promedios faltantes (NA)",
-    comma(sum(is.na(simce_rbd$promedio_simce))),
-  "SIMCE RBD", "Registros duplicados (agno-grado-rbd-area)",
-    comma(sum(duplicated(simce_rbd[, c("agno","grado","rbd","area")]))),
+    comma(sum(is.na(simce_rbd$promedio_simce))), "Excluidos del análisis",
+  "SIMCE alumno", "Puntaje matemática faltante",
+    percent(mean(is.na(simce_alu$ptje_mate)), .1), "Excluidos por variable",
+  "SIMCE alumno", "Puntaje lectura faltante",
+    percent(mean(is.na(simce_alu$ptje_lect)), .1), "Excluidos por variable",
   "Ensayos", "Porcentaje de logro > 100",
-    comma(sum(ensayos$porcentaje_logro > 100, na.rm = TRUE)),
-  "Ensayos", "RBD original faltante",
-    comma(sum(is.na(ensayos$rbd))),
-  "Ensayos", "RBD faltante incluso tras revisión (rbd_revisado)",
-    comma(sum(is.na(ensayos$rbd_revisado))),
-  "Ensayos", "Discrepancias entre rbd y rbd_revisado",
-    comma(sum(as.character(ensayos$rbd) != as.character(ensayos$rbd_revisado),
-              na.rm = TRUE))
-)
-kable(errores, caption = "Resumen de problemas de calidad detectados",
-      col.names = c("Fuente", "Problema", "Magnitud"))
+    comma(sum(ensayos$porcentaje_logro > 100, na.rm = TRUE)), "Excluidos de cruces con SIMCE",
+  "Ensayos", "RBD faltante tras revisión (rbd_revisado)",
+    comma(sum(is.na(ensayos$rbd_revisado))), "No cruzables con SIMCE",
+  "Ensayos", "Nombres de alumnos en texto plano (columna nombre)",
+    "toda la base", "Riesgo de privacidad: anonimizar"
+) %>%
+  kable(caption = "Resumen de problemas de calidad",
+        col.names = c("Fuente", "Problema", "Magnitud", "Estado"))
 ```
 
-```{r errores-detalle}
-# ¿Dónde se concentran los duplicados de la base RBD?
-simce_rbd %>%
-  group_by(agno, grado) %>%
-  summarise(duplicados = sum(duplicated(cbind(rbd, area))), .groups = "drop") %>%
-  filter(duplicados > 0) %>%
-  kable(caption = "Duplicados de la base RBD por año y grado")
+**Notas:**
 
-# Registros de ensayo con logro > 100
-ensayos %>%
-  filter(porcentaje_logro > 100) %>%
-  count(agno, grado, area, apellido_evaluacion, sort = TRUE) %>%
-  kable(caption = "Registros con % de logro > 100 según evaluación")
-```
+* El **residuo de decimales** (~40.000 registros de 2024 con puntajes como 23,78 o 1,54 en vez de 237,8 o 154) proviene del mismo problema de separadores ya corregido: valores con distinta cantidad de decimales quedaron divididos por 10 o por 100. Conviene corregirlo también en el origen.
+* La base de ensayos ahora incluye **nombres de alumnos** (`nombre`) y de colegios en texto plano. Para compartir o publicar resultados se recomienda eliminar o seudonimizar esas columnas.
 
-**Síntesis de errores:**
+# Conclusiones
 
-* **Escala x100 en puntajes de alumno 2024–2025.** Es el problema más grave: sin corrección, cualquier promedio o comparación temporal queda invalidada. La corrección aplicada (dividir por 100 los valores > 1000) es un parche razonable, pero debe corregirse en el origen (lectura de decimales con coma).
-* **Duplicados en la base RBD**, concentrados en 2° medio 2024 (los ~6.000 registros extra explican por qué 2m duplica su conteo ese año). Si no se deduplica, ese año pesa el doble en cualquier promedio.
-* **Ceros como código de faltante** en `promedio_simce`: deben excluirse antes de promediar; de lo contrario sesgan los promedios a la baja.
-* **% de logro > 100** en los ensayos (pocos casos, hasta 160): probablemente errores de digitación o ponderaciones mal aplicadas; se recomienda excluirlos o auditarlos.
-* **RBD faltante en ~29% de los ensayos** (parcialmente recuperado en `rbd_revisado`): limita el cruce con SIMCE y puede sesgar las correlaciones si los colegios no identificados son sistemáticamente distintos.
-
-# Conclusiones y análisis sugeridos a futuro
-
-1. **Distribuciones:** los puntajes SIMCE (alumno y colegio) muestran formas aproximadamente normales dentro del rango esperado una vez corregida la escala y excluidos los ceros; los ensayos concentran su masa entre 40% y 75% de logro, con diferencias claras entre áreas y gradoes.
-2. **Consistencia alumno–colegio:** el agregado por RBD desde la base de alumnos reproduce en gran medida la base RBD, lo que valida el uso conjunto de ambas; las discrepancias grandes identificadas (tabla de outliers) deben auditarse.
-3. **Ensayos como predictor:** la relación positiva entre % de logro en ensayos y promedio SIMCE del mismo año respalda su uso para monitoreo, con la cautela de que la escala de los ensayos no es directamente comparable a puntos SIMCE.
-4. **Sugerencias de análisis adicionales:**
-   * **Equiparación de escalas**: estimar una función de mapeo (regresión o *equipercentile linking*) entre % de logro del ensayo y puntaje SIMCE para producir proyecciones por colegio.
-   * **Seguimiento longitudinal de alumnos** usando `mrun`/`idalumno` para medir valor agregado entre grados y años.
-   * **Análisis de dificultad por instrumento** (`apellido_evaluacion`, `id_evaluacion`) para separar aprendizaje real de cambios de dificultad entre aplicaciones.
-   * **Cobertura y sesgo de participación**: comparar el universo de colegios con ensayo vs. el universo SIMCE para saber cuán representativa es la muestra Santillana.
-   * **Modelos jerárquicos** (alumno anidado en curso y colegio) para descomponer la varianza y estimar efectos colegio más robustos que el promedio simple.
+1. **Calidad:** las dos correcciones de la fuente se verifican (sin duplicados, escala correcta), quedando solo un residuo menor de decimales en 2024 que este reporte corrige y que conviene arreglar en el origen.
+2. **Panorama SIMCE:** distribuciones en rango esperado, con la brecha esperable por grupo socioeconómico y dependencia; matemática de 2° medio es consistentemente el área más débil, coherente con el bajo % de logro de los ensayos de ese grado.
+3. **Consistencia entre fuentes:** el agregado por colegio desde la base de alumnos reproduce casi exactamente la base RBD (correlaciones ~0,97+, diferencia mediana < 1 punto), validando el uso conjunto.
+4. **Evolución temporal:** las series estandarizadas y el panel balanceado permiten comparar la trayectoria de ensayos y SIMCE en unidades comunes; el análisis de cambios por colegio indica en qué medida los ensayos detectan mejoras reales año a año además de ordenar colegios.
+5. **Siguientes pasos sugeridos:** equiparación formal de escalas ensayo→SIMCE (*equipercentile linking*), seguimiento longitudinal por `mrun`, ajuste por dificultad de instrumento (`apellido_evaluacion`), y modelos jerárquicos (alumno-curso-colegio) controlando GSE y dependencia para estimar efectos colegio robustos.

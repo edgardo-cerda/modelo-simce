@@ -49,11 +49,8 @@ library(broom)
 # ---- 0. Configuración --------------------------------------------
 # Configurar rutas de archivos: ----
 rutas <- config::get(file = "config.yml")
-ruta_data_in <- rutas$ruta_data_in
-ruta_data_intermedia <- rutas$ruta_data_intermedia
-
-dir_salidas <- ruta_data_intermedia %>% file.path('modelo_lme')
-dir_salidas %>% dir.create(showWarnings = FALSE)
+ruta_outputs <- rutas$ruta_outputs
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
 
 school_model_data <- dir_salidas %>% file.path('school_model_data.rds') %>% readRDS()
 
