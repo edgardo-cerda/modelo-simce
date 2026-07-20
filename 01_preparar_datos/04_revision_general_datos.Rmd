@@ -199,7 +199,7 @@ ensayos %>%
 
 ## Comparación entre tipo de evaluaciones
 
-```{r ens-progresion}
+```{r ens-tipos-evaluaciones}
 ensayos %>%
   mutate(evaluacion = paste0(tipo_evaluacion, ' - ', apellido_evaluacion)) %>% 
   ggplot(aes(y = evaluacion, x = porcentaje_logro)) +
@@ -212,7 +212,7 @@ ensayos %>%
 
 ## Comparación entre evaluaciones en general
 
-```{r ens-progresion}
+```{r ens-evaluaciones}
 ensayos %>%
   mutate(evaluacion = paste0(tipo_evaluacion, '-',n_evaluacion)) %>% 
   group_by(evaluacion, tipo_evaluacion, n_evaluacion, grado, area, agno) %>% 
@@ -288,10 +288,11 @@ Los metadatos nuevos permiten dimensionar las brechas estructurales del sistema 
 ```{r rbd-brechas, fig.height=6}
 simce_rbd %>%
   filter(!is.na(promedio_valido), !is.na(gse)) %>%
-  ggplot(aes(gse, promedio_valido, fill = area)) +
-  geom_boxplot(outlier.alpha = .1) +
-  facet_wrap(~grado, labeller = labeller(grado = lab_grado)) +
-  scale_fill_manual(values = pal_area) +
+  filter(grado %in% c('4b', '2m')) %>% 
+  ggplot(aes(area, promedio_valido, fill = gse)) +
+  geom_boxplot() +
+  facet_grid(grado~.) +
+  # scale_fill_manual() +
   labs(title = "Promedio SIMCE por grupo socioeconómico del colegio",
        x = "Grupo socioeconómico", y = "Promedio SIMCE", fill = "Área")
 
