@@ -34,9 +34,13 @@
 
 library(tidyverse)
 
-ind_features    <- readRDS("output/ind_features.rds")
-school_features <- readRDS("output/school_features.rds")
-modelos         <- readRDS("output/modelos_escolares.rds")
+rutas <- config::get(file = "config.yml")
+ruta_outputs <- rutas$ruta_outputs
+dir_salidas <- ruta_outputs %>% file.path('modelo_lm')
+
+ind_features    <- readRDS(file.path(dir_salidas, "ind_features.rds"))
+school_features <- readRDS(file.path(dir_salidas, "school_features.rds"))
+modelos         <- readRDS(file.path(dir_salidas, "modelos_escolares.rds"))
 
 anio_prediccion <- max(school_features$agno)
 cat("Prediciendo ronda:", anio_prediccion, "\n\n")
@@ -59,7 +63,7 @@ pred_colegio <- school_features %>%
 write_csv(
   pred_colegio %>%
     select(agno, grado, area, rbd_revisado, n_estudiantes, mean_logro, last_logro, pred_simce),
-  "output/predicciones_colegio.csv"
+  file.path(dir_salidas, "predicciones_colegio.csv"))
 )
 
 # ---- b) Predicción a nivel de estudiante ---------------------------------
@@ -74,7 +78,7 @@ pred_individual <- ind_para_predecir %>%
 write_csv(
   pred_individual %>%
     select(agno, grado, area, rbd_revisado, id_usuario_curso, mean_logro, last_logro, pred_simce),
-  "output/predicciones_individual.csv"
+  file.path(dir_salidas, "predicciones_individual.csv")
 )
 
 # ---- Chequeo de coherencia entre ambos niveles ---------------------------
@@ -97,9 +101,9 @@ print(chequeo %>% summarise(
   diferencia_abs_media = mean(abs(diferencia), na.rm = TRUE)
 ))
 
-write_csv(chequeo, "output/chequeo_coherencia.csv")
+write_csv(chequeo, file.path(dir_salidas, "chequeo_coherencia.csv"))
 
-cat("\nListo. Archivos generados en output/:\n",
+cat("\nListo. Archivos generados en", dir_salidas, ":\n",
     " - predicciones_colegio.csv\n",
     " - predicciones_individual.csv\n",
     " - chequeo_coherencia.csv\n")

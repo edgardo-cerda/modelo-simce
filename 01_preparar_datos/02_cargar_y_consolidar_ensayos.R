@@ -67,7 +67,7 @@ datos_ensayo_simce_consolidado_rbd <- datos_ensayo_simce_consolidado %>%
   left_join(conversion_id_colegio_rbd, by = 'id_colegio') %>% 
   mutate(
     agno = as.numeric(agno),
-    nivel = case_when(str_detect(tolower(curso), '2..m') ~ '2m',
+    grado = case_when(str_detect(tolower(curso), '2..m') ~ '2m',
                       str_detect(tolower(curso), '4..b') ~ '4b'),
     area = case_when(str_detect(tolower(area), 'lenguaje') ~ 'lenguaje', 
                      str_detect(tolower(area), 'mate') ~ 'matematica'),
