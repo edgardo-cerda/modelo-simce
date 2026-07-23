@@ -3,7 +3,8 @@ library(arrow)
 library(readxl)
 
 # Configurar rutas de archivos: ----
-rutas <- config::get(file = "config.yml")
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 

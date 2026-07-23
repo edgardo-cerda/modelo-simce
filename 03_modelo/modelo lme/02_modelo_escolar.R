@@ -48,7 +48,8 @@ library(broom)
 
 # ---- 0. Configuración --------------------------------------------
 # Configurar rutas de archivos: ----
-rutas <- config::get(file = "config.yml")
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
 

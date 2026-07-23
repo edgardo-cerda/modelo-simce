@@ -23,10 +23,6 @@ knitr::opts_chunk$set(
 )
 
 # Paquetes -------------------------------------------------------------
-paquetes <- c("tidyverse", "knitr", "scales", "janitor")
-faltantes <- paquetes[!paquetes %in% installed.packages()[, "Package"]]
-if (length(faltantes) > 0) install.packages(faltantes)
-
 library(tidyverse)
 library(knitr)
 library(scales)
@@ -46,7 +42,9 @@ tabla <- function(df, ...) {
 }
 
 # Configurar rutas de archivos: ----
-rutas <- config::get(file = "config.yml")
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
+
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 ruta_outputs <- rutas$ruta_outputs
