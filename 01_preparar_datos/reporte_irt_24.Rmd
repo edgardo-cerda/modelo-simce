@@ -1,0 +1,680 @@
+---
+  # title: "Reporte IRT Pruebas Santillana"
+  # author: "Departamento de evaluación"
+output:
+  html_document:
+    theme: lumen
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: true
+    number_sections: true
+    toc_depth: 2
+    toc_title: "Índice"
+params:
+  data_file: "ruta/dummy.csv"
+date: "`r Sys.Date()`"
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r}
+library(readr)
+library(readxl)
+library(stringr)
+library(flextable)
+library(tidyr)
+library(janitor)
+library(MASS)
+library(dplyr)
+library(tidyverse)
+library(polycor)
+library(ltm)
+library(KernSmoothIRT)
+library(psych)
+library(flextable)
+library(htmltools)
+library(arrow)
+```
+
+```{r, out.width="350px"}
+knitr::include_graphics("../code/logo_santillana.jpg")
+
+```
+
+```{r}
+
+# cargar funciones
+source("00_funciones.R")
+
+# dataframe pdt1_prueba
+pdt1_prueba <- read_parquet(params$data_file, as_data_frame = T)
+
+# pdt1_prueba <- read_parquet("../../data_out/reporte_irt_2/02_bbdd_reportes/item_24/lenguaje_1b_cognita_procesada.parquet", as_data_frame = T)
+
+```
+
+
+```{r}
+#prueba <- pdt1_prueba %>% pull(evaluacion) %>% unique()
+prueba <- "Evaluación Cognita cierre "
+curso <-pdt1_prueba %>% pull(curso) %>% unique()
+curso<- str_extract(curso, "^\\d+[°º]\\s*(Básico|Medio)") %>% unique()
+if(length(curso)==1){
+  
+curso<- curso[[1]]  
+}else{
+numero <-  str_extract_all(curso,"\\d")
+n_1 <-  numero[[1]]
+n_2 <-  numero[[2]]
+  
+if(n_1>n_2){
+  
+  curso<-curso[[1]]
+}else{
+  curso<-curso[[1]]
+  
+}
+}
+area <- pdt1_prueba %>% pull(area) %>% unique()
+area<- str_extract(area, "matemática|historia|lenguaje") %>% unique()
+area<-str_to_title(area)
+###opción de notación científica
+options(scipen = 999)
+```
+
+
+```{r}
+
+pdt1_prueba <- pdt1_prueba %>%
+  rename("nombre_apellido" = "nombre_y_apellido"
+         ,"cod_item"="item"
+         ,"item" = "item_no"
+         ,"alt_correcta" = "alternativa_correcta"
+         ,"alt_incorrecta" = "alternativa_incorrecta")
+
+# head(pdt1_prueba, 10)
+
+```
+
+```{r}
+pdt1_prueba <- pdt1_prueba %>% 
+  mutate(rev_item = alt_correcta)
+
+
+
+pdt1_prueba2 <- pdt1_prueba %>%
+  mutate(rev_item = alt_correcta ) %>% 
+  dplyr::select(nombre_apellido, item, rev_item,curso ) %>%
+  arrange(item) %>%  # Ordenar por ítem de manera ascendente
+  group_by(nombre_apellido) %>%
+  pivot_wider(names_from = "item",
+              values_from = "rev_item",
+              names_prefix = "item_") %>%
+  ungroup()
+
+
+
+
+#construir base de datos para modelo IRT y gráficos ICC modélo tres parámetros
+estudiantes_prueba <-length(unique(pdt1_prueba2$nombre_apellido))
+pdt_irt <- pdt1_prueba2 %>%  dplyr::select(-c(nombre_apellido,curso)) 
+
+
+# Asegurar que las columnas pivotadas sean vectores numéricos
+pdt_irt <- pdt1_prueba2 %>%
+  dplyr::select(-c(nombre_apellido, curso))
+
+# Convertir cada columna de `pdt_irt` en vector numérico
+pdt_irt <- as.data.frame(lapply(pdt_irt, function(col) as.numeric(unlist(col))))
+
+# Revisar estructura después de la conversión
+#str(pdt_irt)
+
+pdt_irt3pl <- tpm(pdt_irt, type = "latent.trait",IRT.param = TRUE)
+
+# Creacion y verificación Modelo IRT (3PL)
+#tryCatch({
+#  pdt_irt3pl <- tpm(pdt_irt, type = "latent.trait", IRT.param = TRUE)
+#  print("Modelo IRT ajustado exitosamente.")
+#}, error = function(e) {
+#  message("Error en el modelo IRT: ", e$message)
+#})
+
+###items para gráfico
+i1_10 <- seq(1,10)
+i11_20 <- seq(11,20)
+i21_24 <- seq(21,24)
+#i31_35 <- seq(31,35)
+# i61_70 <- seq(61,70)
+# i71_80 <- seq(71,80)
+total_item<-seq(1,24)
+```
+
+
+# Informe análisis psicométrico `r  paste0(prueba," ",curso," asignatura de"," ",area) ` 
+
+<div style="text-align: justify">El presente informe da cuenta del análisis IRT de tres parámetros para la `r prueba`. Este análisis se realizó sobre la base de **`r estudiantes_prueba`** estudiantes, quienes rindieron esta evaluación . El análisis realizado permite conocer la concistencia interna de una medición y sus ítems. Para esto, en una primera instancia se presentarán datos relacionados al comportamiento a nivel general de la prueba, para luego ingresar al detalle para cada ítem, graficando la curva característica del ítem (ICC) y también el detalle al interior de cada ítem a través de la curva característica de categorías (OCC). \
+
+Para llevar a cabo estos análisis, se utilizó el software estadístico R con su interaz usuario Rstudio, el cual permite realizar ambos tipos de análisis a través de sus paquetes  [ltm](https://www.jstatsoft.org/article/download/v017i05/117) y [KernSmoothIRT](https://www.jstatsoft.org/article/view/v058i06) (para un mayor detalle puede hacer click sobre los nombres y será deribado a los documentos de respaldo). Estos paquetes permitieron hacer los análisis que a continuación se presentarán en el caso del paquete ltm se utilizó para realizar los análisis ICC y en el caso de KernSmoothIRT se utilizó para el análisis OCC. Ahora bien, antes de analizar la información del modelo, es preciso mencionar algunos conceptos claves que se verán en la presentación de resultados, estos son :\
+
+**a) Discriminación (Dscrmn)** \
+
+Cuando mayor sea la pendiente, mayor será el índice de discriminación. Esta propiedad técnica de la CCI describe cómo un ítem puede diferenciar entre los examinados que tienen habilidades inferiores a la localización del ítem y los que tienen habilidades superiores a la localización del ítem. \
+
+**b) Dificultad (Dffclt)** \
+
+En la teoría de respuesta al ítem, la dificultad del ítem describe dónde el ítem funciona en la escala de habilidad. Por ejemplo, un ítem fácil funciona entre examinados de poca habilidad y un ítem difícil funciona entre los examinados de mucha habilidad. O sea este es un indicador de localización. \
+
+**c) Azar (Gussng)** \
+
+Este parámetro representa la probabilidad de acertar el ítem al azar cuando “no se sabe nada”. \
+
+
+Para comenzar con el análisis se revisará el modelo de tres parámetros realizado con el paquete ltm anteriormente mencionado. El modelo IRT de tres parámetros que incluye azar (Gussng), Dificultad (Dffclt) y discriminación (Dscrmn). A continuación se muestra la probabilidad P(x=1|z=0) de éxito en cada ítem tomando en consideración estos tres parámetros: \
+</div>
+
+
+```{r fig.align="center"}
+tab<- as.data.frame(coef(pdt_irt3pl, prob = TRUE)) 
+
+tab %>% 
+  mutate(
+    Gussng = round_half_up(Gussng,3)
+    ,Dffclt = round_half_up(Dffclt,2)
+    ,Dscrmn = round_half_up(Dscrmn,2)
+  ) %>% 
+  DT::datatable()
+
+```
+
+
+<div style="text-align: justify"> Ahora bien, luego de revisar el módelo y sus parámetros a nivel general, se preesenta un gráfico de función de información de la prueba que muestra la información proporcionada la prueba según la habilidad estimada de los estudiantes. \
+</div>
+
+
+```{r fig.align="center"}
+#Plot Test Information Function 
+plot(pdt_irt3pl,type="IIC",items=0, xlab = "Habilidad", ylab="Información",main = "Función de información de la prueba")
+```
+
+
+```{r}
+# Asegurar que las columnas pivotadas sean vectores numéricos
+pdt1_alfa <- pdt1_prueba %>%
+  mutate(rev_item = case_when(
+    alt_correcta == 1 ~ 1,
+    alt_incorrecta == 1 ~ 0,
+    TRUE ~ NaN
+  )) %>%
+  dplyr::select(nombre_apellido, item, rev_item, curso) %>%
+  arrange(item) %>%
+  group_by(nombre_apellido) %>%
+  pivot_wider(
+    names_from = "item",
+    values_from = "rev_item",
+    names_prefix = "item_"
+  ) %>%
+  ungroup() %>%
+  dplyr::select(-c(nombre_apellido, curso))
+
+# Convertir cada columna de `pdt1_alfa` en vector numérico
+pdt1_alfa <- as.data.frame(lapply(pdt1_alfa, function(col) as.numeric(unlist(col))))
+
+# Revisar estructura después de la conversión
+#str(pdt1_alfa)
+
+# Calcular alfa de Cronbach
+#tryCatch({
+#  a_cronbach <- alpha(pdt1_alfa, check.keys = TRUE)
+#  print(a_cronbach)
+#}, error = function(e) {
+#  message("Error en el cálculo del alfa de Cronbach: ", e$message)
+#})
+
+```
+
+```{r}
+a_cronbach<-alpha(pdt1_alfa, check.keys=TRUE)
+```
+
+
+## Alfa de Cronbach de la evaluación \
+\
+
+<div style="text-align: justify"> En esta sección se presentan los valores de Alfa de cronbach para la evaluación, esto con la finlidad de evaluar la concistencia de la evaluación y de esta forma aproximarse a conocer si la evaluación en su conjunto logra medir de buena manera la habilidad que se propone medir. \
+
+**a) Coeficiente Alfa** \
+
+Esta es el valor de Alfa generalmente usado para evaluar la confiabilidad de una escala. Es también el que se reporta en publicaciones y reportes técnicos.\
+
+El valor de Alfa puede asumir valores entre 0 y 1. Valores cercanos a 1 son mejores, pues indican mayor consistencia interna. Por convención y para fines prácticos, valores de Alfa iguales o mayores a 0.7 se consideran aceptables, mayores a 0.8 son buenos, y mayores a 0.9 son excelentes. \
+
+**b) Coeficiente Alfa estandarizado** \
+
+Este valor se obtiene estandarizando las puntuaciones de la escala antes de calcular Alfa. Es útil cuando nuestros ítems no tienen el mismo rango de valores posibles, pues así evitamos sesgar los resultados. \
+Por lo general, obtenemos valores que son poco diferentes a los obtenidos con las puntuaciones observadas. En este caso, obtuvimos `r round_half_up(a_cronbach[["total"]]$std.alpha,2)`. \
+
+Valores por debajo de 0.5 y cercanos a 0 indican que una escala tiene una pobre confiabilidad, sin embargo valores por sobre los 0.75 indican una buena confiabilidad. \
+
+
+**c) Correlación promedio ítems** \
+
+Es el valor promedio de correlación entre los ítems Entre más cercano sea este valor a 1, los ítems han tenido más asociación entre ellos.\
+
+En este caso hemos obtenido un `r round_half_up(a_cronbach[["total"]]$average_r,2)`, lo cual indica que los ítems de la escala. en promedio, tienen una baja aociación entre ellos.\
+
+Este resultado nos ilustra que es posible obtener valores altos de Alfa, aunque los reactivos no tengan correlaciones fuertes entre ellos. Por lo tanto, no podemos asumir que tenemos ítems con una fuerte asociación entre ellos únicamente a partir del valor de Alfa, necesitamos explorar estos resultados primero. \
+
+Entonces a continuación se presenta la información correspondiente a los valores asociados a la prueba Alfa: \
+
+</div>
+
+```{r }
+a_cronbach[["total"]] %>%
+dplyr::select(raw_alpha,std.alpha,average_r,sd) %>%
+mutate(
+  raw_alpha=round_half_up(raw_alpha,2)
+  ,std.alpha=round_half_up(std.alpha,2)
+  ,average_r=round_half_up(average_r,2)
+  ,sd=round_half_up(sd,2)
+) %>%   
+flextable() %>% 
+set_header_labels(raw_alpha = "Coeficiente Alfa",std.alpha = "Coeficiente Alfa estandarizado",
+                  average_r = "Correlación promedio ítems", sd = "Desviación Estandar") %>% 
+                       width(width = 1.4) %>% 
+                       theme_box() %>% 
+                       align(align =  "center", part = "all") %>% 
+                       bg( bg = "light blue", part = "header") %>% 
+                       colformat_num(j = 1:4 , big.mark = ".", digits =3)  
+
+
+```
+
+
+
+<div style="text-align: justify">Adicionalmente se presentan los valores de Coeficiente Alfa, pero esta vez en detalle para cada uno de los ítems de esta prueba: \
+
+
+</div>
+```{r }
+a_cronbach[["alpha.drop"]] %>%
+  dplyr::select(raw_alpha,std.alpha,average_r) %>% 
+  mutate(
+    raw_alpha = round_half_up(raw_alpha,3)
+    ,std.alpha = round_half_up(std.alpha,3)
+    ,average_r = round_half_up(average_r,3)
+  ) %>% 
+  rename("Coeficiente Alfa"= "raw_alpha","Coeficiente Alfa estandarizado" = "std.alpha","Correlación promedio ítems"  = "average_r") %>% 
+  DT::datatable()
+```
+
+## Gráficos ICC (Curva característica del ítem) \
+
+<div style="text-align: justify"> Continuándo con la presentación de resultados, a continuación se muestrn los gráficos correspondientes al ICC para cada ítem. Con la finalidad de no saturar de información al lector, los gráficos serán presentados en grupos de 10 ítems, hasta llegar a la totalidad de ítems de la evaluación.</div>
+
+```{r fig.align="center"}
+plot(pdt_irt3pl,type="ICC",items = i1_10 ,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 1 al 10") 
+
+plot(pdt_irt3pl,type="ICC",items = i11_20,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 11 al 20")
+
+plot(pdt_irt3pl,type="ICC",items = i21_24,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 21 al 24")
+
+# plot(pdt_irt3pl,type="ICC",items = i31_35,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 31 al 35")
+
+# plot(pdt_irt3pl,type="ICC",items = i41_50,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 41 al 50")
+# 
+# plot(pdt_irt3pl,type="ICC",items = i51_60,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 51 al 60")
+# 
+# plot(pdt_irt3pl,type="ICC",items = i61_65,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 61 al 65") 
+#   
+# # plot(pdt_irt3pl,type="ICC",items = i61_70,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 61 al 70")
+# # plot(pdt_irt3pl,type="ICC",items = i71_80,xlab = "Habilidad", ylab="Probabilidad",main = "Curva característica del ítem (ICC) - items 71 al 80")
+
+```
+
+```{r}
+## Formato base de datos para prueba IRT y gráficos OCC
+pdt1_prueba2 <- pdt1_prueba %>%
+  mutate(rev_item = alt_correcta) %>% 
+  dplyr::select(nombre_apellido, item, rev_item, curso) %>%                   
+  group_by(nombre_apellido) %>% 
+  pivot_wider(
+    names_from = "item",
+    values_from = "rev_item",
+    names_prefix = "item_"
+  ) %>% 
+  ungroup()
+
+### Construcción modelo OCC
+pdt1_occ <- pdt1_prueba %>%
+  arrange(item) %>% 
+  mutate(rev_item = case_when(
+    respuesta  == "A" ~ 1,
+    respuesta  == "B" ~ 2,
+    respuesta  == "C" ~ 3,
+    respuesta  == "D" ~ 4,
+    # Letra == "E" ~ 5,
+    respuesta  == "-" ~ 0,
+    TRUE ~ 0
+  )) %>% 
+  dplyr::select(nombre_apellido, item, rev_item, curso) %>%
+  distinct(nombre_apellido, item, .keep_all = TRUE) %>%  # Eliminar duplicados
+  pivot_wider(
+    names_from = "item",
+    values_from = "rev_item",
+    names_prefix = ""
+    
+  ) %>% 
+  ungroup()
+
+## Crear una base de datos clave
+clave <- pdt1_prueba %>% 
+  filter(alt_correcta == 1) %>%
+  group_by(item) %>% 
+  slice(1) %>% 
+  arrange(item) %>% 
+  mutate(rev_item = case_when(
+    respuesta  == "A" ~ 1,
+    respuesta  == "B" ~ 2,
+    respuesta  == "C" ~ 3,
+    respuesta  == "D" ~ 4,
+    # Letra == "E" ~ 5,
+    respuesta  == "-" ~ 0,
+    TRUE ~ 0
+  )) 
+
+clave_p <- clave$rev_item
+
+## Modelo IRT OCC
+## Filtrar base de datos para dejar sólo las alternativas
+var_item <- pdt1_occ %>% dplyr::select(-c(nombre_apellido, curso)) %>% names()
+
+pdt1_occ <- pdt1_occ %>%
+  dplyr::select(-c(nombre_apellido, curso)) %>% 
+  mutate(across(all_of(var_item), ~ as.integer(.)))  
+
+pdt1_occ_matrix <- data.matrix(pdt1_occ)
+pdt1_occ2_m <- ksIRT(responses = pdt1_occ_matrix, key = clave_p, format = 1)
+
+#plot(pdt1_occ2_m, plottype="OCC", item= total_item, adj = 0.5,mtext(adj = 0.5, side = 3)) 
+#str(pdt1_occ2_m$ocfun)
+```
+
+```{r}
+OCCplot2 <- function (OBJ, items, alpha, axis, quants, main, xlab, ylab,
+                      xlim, ylim, key = NULL, correct_color = "green", ...) {
+  if (missing(ylim))  ylim <- c(0, 1)
+  if (missing(xlim))  xlim <- c(min(axis), max(axis))
+  if (missing(ylab))  ylab <- "Probability"
+  if (missing(main))  main <- -1
+  if (missing(alpha)) alpha <- FALSE
+  
+  plotit <- function(x, OBJ, alpha, axis, quants, main, xlim, ylim, xlab, ylab, key, correct_color, ...) {
+    if (main == -1) {
+      main <- paste("Item: ", OBJ$itemlabels[x], "\n")
+    }
+    
+    # Crear gráfico vacío
+    plot(axis, rep(NA, length(axis)), ylim = ylim, main = main, xlim = xlim,
+         type = "n", ylab = ylab, xlab = xlab, ...)
+    
+    IRFlines <- OBJ$OCC[OBJ$OCC[, 1] == x, ]
+    SE <- OBJ$stderrs[OBJ$OCC[, 1] == x, ]
+    
+    # 
+    if (!is.null(key)) {
+      correct_option <- key[x]
+    } else if (!is.null(OBJ$correct) && length(OBJ$correct) >= x) {
+      correct_option <- OBJ$correct[x]
+    } else {
+      correct_option <- NA
+    }
+    
+    for (i in 1:nrow(IRFlines)) {
+      opcion <- IRFlines[i, 2]
+      
+      # Asignar color
+      if (!is.na(correct_option) && as.integer(opcion) == as.integer(correct_option)) {
+        colortouse <- correct_color
+      } else if (opcion == 1) {
+        colortouse <- "darkcyan"
+      } else if (opcion == 2) {
+        colortouse <- "darkgreen"
+      } else if (opcion == 3) {
+        colortouse <- "purple"
+      } else if (opcion == 4) {
+        colortouse <- "darkorange"
+      } else if (opcion == 0) {
+        colortouse <- "darkgray"
+      } else {
+        colortouse <- "black"
+      }
+      
+      # Asignar etiqueta (A, B, C, D, NR)
+      if (opcion == 0) {
+        word <- "NR"
+      } else if (opcion == 1) {
+        word <- "A"
+      } else if (opcion == 2) {
+        word <- "B"
+      } else if (opcion == 3) {
+        word <- "C"
+      } else if (opcion == 4) {
+        word <- "D"
+      } else {
+        word <- as.character(opcion)
+      }
+      
+      lwidth <- 2
+      
+      # Extraer probabilidades (omitir las tres primeras columnas)
+      prob_values <- as.numeric(IRFlines[i, -(1:3)])
+      
+      if (length(prob_values) == length(axis)) {
+        lines(axis, prob_values, col = colortouse, lwd = lwidth)
+        max_idx <- which.max(prob_values)
+        text(axis[max_idx], prob_values[max_idx], word, cex = 1.1, 
+             col = colortouse, font = 2)
+        
+        if (alpha) {
+          ME <- qnorm(1 - alpha/2) * as.numeric(SE[i, -(1:3)])
+          confhigh <- pmin(prob_values + ME, 1)
+          conflow  <- pmax(prob_values - ME, 0)
+          lines(axis, confhigh, lty = 2, col = colortouse)
+          lines(axis, conflow,  lty = 2, col = colortouse)
+        }
+      }
+    }
+    
+    axis(3, at = quants, labels = labels(quants), tck = 0)
+    abline(v = quants, col = "blue", lty = 2)
+    box()
+  }
+  
+  for (item in items) {
+    plotit(item, OBJ, alpha, axis, quants, main, xlim, ylim, xlab, ylab, key, correct_color, ...)
+  }
+}
+
+```
+
+## Gráficos OCC (Curva característica de opciones) \
+
+<div style="text-align: justify"> A continuación se presenta la información correspondiente al gráfico OCC (curva característica de opciones), donde las alternativas de respuesta están asociadas a números, vale decir, 1 = A, 2 = B, 3 = C, 4 = D y 0 hace referencia a una pregunta que no fue contestada por el/la estudiante. \
+
+Para facilitar la revisión de los gráficos, se deja una tabla interactiva para poder revisar las claves de aquellos ítems que generen ineterés por parte de los lectores.</div> \
+
+
+```{r fig.align="center"}
+clave %>% 
+  dplyr::select(item, respuesta) %>% rename("Item" = "item", "Clave" = "respuesta") %>% 
+  DT::datatable()
+```
+
+<div style="text-align: justify"> Como una primera aproximación a la revisión del comportamiento de los ítems, se muestra un gráfico de 2 dimensiones que nos reporta información sobre la discriminación y dificultad de los ítems. \
+
+Para una mejor comprensión del gráfico, se debe tomar en consideración las siguientes cosas: \
+
+**1.- Eje horizontal**: este eje muestra la dificultad del ítem, siendo la dificultad menor hacia la izquierda y a la derecha denota una mayor dificultad. \
+**2.- Eje vertical**: este eje representa la discriminación del ítem, iniciando de abajo hacia arriba con una menor dificultad hasta la dificultad mayor . \
+
+En este sentido, a través de este gráfico es posible identificar cuatro grupos de ítems a saber: \
+
+- esquina inferior izquierda: ítems con valores bajos tanto en dificultad como discriminaciión. \
+- esquina superior izquierda: ítems con valores altos en discriminación pero bajos en dificultad. \
+- esquina inferior derecha: ítems con valores altos en dificultad pero bajos en discriminación. \
+- esquina superior derecha: ítems con valores altos en discriminación y dificultad. \
+</div> \
+
+
+```{r fig.align="center"}
+plot(pdt1_occ2_m, plottype="PCA")  
+```
+
+
+<div style="text-align: justify">Con la información revisada en el gráfico anterior se puede proceder a una observación más detallada del comportamiento de las categorías de opciones en cada uno de los ítems de esta prueba. Antes de continuar, es necesario precisar que la clave se encuentra en 'azul' y NR en 'gris'. </div> \
+
+```{r fig.align="center"}
+# Establece la disposición: filas = número de ítems / 2 (redondeado hacia arriba) y 2 columnas
+
+OCCplot2(
+  OBJ   = pdt1_occ2_m,
+  items = total_item,  
+  alpha = FALSE,
+  axis  = pdt1_occ2_m$evalpoints,
+  quants= pdt1_occ2_m$subjthetasummary,
+  main  = -1,
+  xlab  = "Habilidad (theta)",
+  ylab  = "Probabilidad",
+  key   = clave_p,
+  correct_color = "blue" 
+)
+
+#plot(pdt1_occ2_m, plottype="OCC", item= total_item, adj = 0.5,mtext(adj = 0.5, side = 3)) 
+#str(pdt1_occ2_m$ocfun)
+```
+
+```{r fig.align="center"}
+#plot(pdt1_occ2_m, plottype="density", item= total_item, adj = 0.5,mtext(adj = 0.5, side = 3)) 
+```
+
+```{r fig.align="center"}
+#plot(pdt1_occ2_m, plottype="EIS", item= total_item, adj = 0.3,mtext(adj = 0.5, side = 3)) 
+```
+
+
+# Análisis punto biserial
+
+La correlación biserial-puntual es una mera aplicación de la correlación de Pearson cuando una de las variables es dicotómica y la otra cuantitativa continua, o eventualmente discreta (Amón, 1984). Suele usarse con frecuencia para calcular el índice de discriminación, dado que es habitual que los ítems sean dicotómicos (o se aciertan o se fallan), y el test constituya una medida cuantitativa discreta.\
+
+La fórmula para el cálculo de esta correlación es la siguiente:\
+
+$$
+r_{pb} = \frac{X_p - \bar{X}}{S_X} \sqrt{pq}
+$$
+
+Para el análisis de la correlación se establecieron los siguientes intervalos:
+
+| Punto de corte (r_pb)             | Categoría                  |
+|-----------------------------------|-----------------------------|
+| r_pb < 0.00                       | Ítem con problema serio    |
+| 0.00 ≤ r_pb ≤ 0.09                | Ítem baja calidad          |
+| 0.10 ≤ r_pb ≤ 0.29                | Ítem aceptable             |
+| r_pb ≥ 0.30                       | Ítem óptimo                |
+
+
+Finalmente se presentan los resultados obtenidos para todos los ítems de este instrumento.
+
+```{r fig.align="center",message = FALSE, warning = FALSE}
+# Cálculo punto biserial
+item<-pdt1_prueba %>%  dplyr::select(item) %>% dplyr::pull(item) %>% unique()
+punto_buserial<-map_df(
+  item
+  ,~santillana_p_biserial(.data = pdt1_prueba,item_analizado = .x)
+
+)
+
+punto_buserial %>% 
+  mutate(
+    punto_biserial=janitor::round_half_up(punto_biserial,2)
+    ,tipo_item = case_when(
+      # ítem con problema serio
+      punto_biserial < 0.0 ~ "Ítem con problema serio"
+      # ítem baja calidad
+      ,punto_biserial >=0.0 & punto_biserial <= 0.090 ~ "Ítem baja calidad"
+      # Item Aceptable
+      ,punto_biserial >=0.10 & punto_biserial <= 0.290 ~ "Ítem aceptable"
+      # Buen ítem
+      ,punto_biserial >=0.30 ~ "Ítem óptimo"
+    )
+  ) %>% 
+  rename("Ítem"= "item"
+         ,"Correlación punto biserial" = "punto_biserial"
+         ,"Categoría ítem"=tipo_item
+         ) %>% 
+  DT::datatable()
+
+
+```
+
+
+# Distribución alternativas por ítem
+
+A continuación se presenta la distribución porcentual de las alternativas contestadas para cada ítem
+
+
+```{r fig.align="center",message = FALSE, warning = FALSE}
+
+items <- pdt1_prueba %>%  dplyr::select(item) %>% dplyr::pull(item) %>% unique()
+
+
+lista_graficos<-purrr::map(items,
+                    ~pdt1_prueba %>% 
+                      grafico_alternativas(
+                        numero_item = as.numeric(.x) 
+                        ,paleta_colores = "azul"
+                      ))
+
+
+
+
+
+```
+
+```{r fig.align="center",message = FALSE, warning = FALSE}
+
+lista_graficos[[1]]
+lista_graficos[[2]]
+lista_graficos[[3]]
+lista_graficos[[4]]
+lista_graficos[[5]]
+lista_graficos[[6]]
+lista_graficos[[7]]
+lista_graficos[[8]]
+lista_graficos[[9]]
+lista_graficos[[10]]
+lista_graficos[[11]]
+lista_graficos[[12]]
+lista_graficos[[13]]
+lista_graficos[[14]]
+lista_graficos[[15]]
+lista_graficos[[16]]
+lista_graficos[[17]]
+lista_graficos[[18]]
+lista_graficos[[19]]
+lista_graficos[[20]]
+lista_graficos[[21]]
+lista_graficos[[22]]
+lista_graficos[[23]]
+lista_graficos[[24]]
+
+
+
+
+
+```
+</div>
