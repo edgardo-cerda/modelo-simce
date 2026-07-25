@@ -46,13 +46,14 @@ ensayo_santillana <- read_parquet(archivo_ensayo) |>
   mutate(colegio = str_replace_all(tolower(colegio),
                                    pattern = c('esc\\.' = 'escuela ',
                                                'bas\\.' = 'basica ',
-                                               'col\\.' = 'colegio ',
+                                               'col\\.|col ' = 'colegio ',
                                                '(part|partic)\\.' = 'paticular ',
                                                '(municip|munic)\\.' = 'municipal',
                                                'tecn\\.' = 'tecnico',
                                                'polit\\.' = 'politecnico',
                                                'fund\\. educ\\.' = 'fundacion educacional',
-                                               'c\\. h\\.' = 'cientifico humanista')),
+                                               'c\\. h\\.' = 'cientifico humanista',
+                                               'biling.e$' = '')),
          # Quitar partes del nombre del colegio que no son realmente del colegio:
          # (piloto) / (impreso) son etiquetas administrativas, no una comuna.
          colegio = str_replace_all(colegio, c('\\(piloto\\)' = '', '- piloto -' = '',
@@ -385,8 +386,8 @@ cat("Sin resolver (requieren revisión manual):",
 
 write_xlsx(resultados_clasificados, archivo_salida)
 
-# resultados_clasificados |>
-#   filter(is.na(rbd_santillana)) |>
-#   arrange(clasificacion) |> 
-#   select(colegio, Nombre_SIMCE, Estado, Similitud_nombre, clasificacion) |> 
-#   view()
+resultados_clasificados |>
+  filter(is.na(rbd_santillana)) |>
+  arrange(clasificacion) |>
+  select(colegio, Nombre_SIMCE, Estado, Similitud_nombre, clasificacion) |>
+  view()
