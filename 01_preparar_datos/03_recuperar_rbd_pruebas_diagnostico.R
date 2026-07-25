@@ -22,16 +22,16 @@ rutas <- config::get(config = usuario, file = "config.yml")
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 
-archivo_ensayo <- ruta_data_intermedia |> file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet')
+archivo_ensayo <- ruta_data_intermedia |> file.path('ensayo_santillana', 'consolidado_ensayo_santillana.parquet')
 archivo_simces <- ruta_data_intermedia |> file.path('simce', 'consolidado_datos_simce_rbd.parquet')
 
 archivo_salida <- ruta_data_intermedia |> 
-  file.path('ensayo_simce', 'diccionario_rbd_ensayo.xlsx')
+  file.path('ensayo_santillana', 'diccionario_rbd_ensayo.xlsx')
 
 # -----------------------------------------------------------------------------
 # 1. CARGA DE DATOS
 # -----------------------------------------------------------------------------
-ensayo_simce <- read_parquet(archivo_ensayo) |> 
+ensayo_santillana <- read_parquet(archivo_ensayo) |> 
   select(id_colegio, colegio, rbd_santillana = rbd) %>%
   distinct(colegio, .keep_all = TRUE)
 
@@ -222,7 +222,7 @@ procesar_colegio <- function(nombre) {
   }
 }
 
-resultado <- ensayo_simce %>%
+resultado <- ensayo_santillana %>%
   rowwise() %>%
   mutate(procesar_colegio(colegio)) %>%
   ungroup()

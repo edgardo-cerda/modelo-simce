@@ -17,6 +17,7 @@ dir_salida |> dir.create(showWarnings = FALSE)
 
 # Listado de archivos brutos SIMCE: ----
 ruta_archivos_brutos_simce <- ruta_data_in |> 
+  file.path('resultados_simce') |> 
   list.files(pattern = 'Simce.*.zip', 
              full.names = TRUE)  
 
