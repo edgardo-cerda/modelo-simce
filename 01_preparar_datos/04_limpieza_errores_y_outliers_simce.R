@@ -15,6 +15,11 @@
 #   3. Exporta: datos corregidos + marcados, y los logs de corrección.
 # ==========================================================================
 
+library(tidyverse)
+library(isotree)
+library(janitor)
+library(arrow)
+library(readxl)
 
 # ---- 0. Configuración --------------------------------------------
 # Configurar rutas de archivos: ----
@@ -24,17 +29,23 @@ ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 
 ruta_resultados  <- file.path(ruta_data_intermedia, 'simce', 'consolidado_datos_simce_rbd.parquet')
-ruta_ensayos     <- file.path(ruta_data_intermedia, 'ensayo_simce', 'consolidado_ensayo_simce.parquet')
+ruta_ensayos     <- file.path(ruta_data_intermedia, 'ensayo_santillana', 'consolidado_ensayo_santillana.parquet')
 carpeta_salida   <- ruta_data_intermedia
 
 umbral_isoforest <- 0.75     # score de anomalía (0-1) sobre el cual se marca
 min_obs_grupo    <- 30      # mínimo de observaciones para ajustar isolation forest por grupo
 factor_iqr       <- 1.75     # multiplicador estándar de Tukey para el método IQR
 
-library(tidyverse)
-library(isotree)
-library(janitor)
-library(arrow)
+# Cargar datos
+resultados_raw <- read_parquet(ruta_resultados, show_col_types = FALSE)
+ensayos_raw0    <- read_parquet(ruta_ensayos, show_col_types = FALSE)
+
+rbd_revisados <- ruta_data_intermedia |>
+  file.path('ensayo_santillana', 'diccionario_rbd_ensayo.xlsx') |> 
+  read_excel()
+  
+ensayos_raw <- ensayos_raw0 |> 
+  left_join(rbd_revisados |> select(id_colegio, rbd_revisado), by = c('id_colegio'))
 
 ## 1. Funciones genéricas de marcado de outliers ---------------------------
 
@@ -258,9 +269,6 @@ corregir_ensayos_santillana <- function(df) {
 
 ## 3. Ejecutar limpieza -----------------------------------------------------
 
-resultados_raw <- read_parquet(ruta_resultados, show_col_types = FALSE)
-ensayos_raw    <- read_parquet(ruta_ensayos, show_col_types = FALSE)
-
 res_limpieza <- corregir_resultados_simce(resultados_raw)
 ens_limpieza <- corregir_ensayos_santillana(ensayos_raw)
 
@@ -278,7 +286,7 @@ cat("Filas: ", nrow(ensayos_raw), " -> ", nrow(ensayos), "\n\n", sep = "")
 
 ## 4. Marcar outliers: IQR + Isolation Forest -------------------------------
 ## Ambos métodos se aplican sobre la MISMA variable de interés de cada
-## dataset, calculados por grupo (agno, grado/nivel, area), y quedan
+## dataset, calculados por grupo (agno, grado/grado, area), y quedan
 ## como dos columnas lógicas independientes: outlier_iqr y outlier_isoforest.
 ## No se eliminan filas; solo se marcan para revisión/decisión posterior.
 
@@ -301,13 +309,13 @@ resultados <- resultados %>%
 ensayos <- ensayos %>%
   flag_outliers_iqr(
     value_col   = "porcentaje_logro",
-    group_vars  = c("agno", "nivel", "area"),
+    group_vars  = c("agno", "grado", "area"),
     factor_iqr  = factor_iqr,
     col_name    = "outlier_iqr"
   ) %>%
   flag_outliers_isoforest(
     feature_cols  = "porcentaje_logro",
-    group_vars    = c("agno", "nivel", "area"),
+    group_vars    = c("agno", "grado", "area"),
     umbral        = umbral_isoforest,
     min_obs_grupo = min_obs_grupo,
     col_name      = "outlier_isoforest",
@@ -338,10 +346,10 @@ ensayos %>%
 ## 5. Exportar resultados ----------------------------------------------------
 
 write_parquet(resultados, file.path(carpeta_salida, 'simce', 'resultados_simce_rbd_corregido.parquet'))
-write_parquet(ensayos,    file.path(carpeta_salida, 'ensayo_simce', "ensayos_santillana_corregido.parquet"))
+write_parquet(ensayos,    file.path(carpeta_salida, 'ensayo_santillana', "ensayos_santillana_corregido.parquet"))
 
 write_csv(res_limpieza$log_correcciones, file.path(carpeta_salida, 'simce', "log_correcciones_resultados.csv"))
-write_csv(ens_limpieza$log_correcciones, file.path(carpeta_salida, 'ensayo_simce', "log_correcciones_ensayos.csv"))
+write_csv(ens_limpieza$log_correcciones, file.path(carpeta_salida, 'ensayo_santillana', "log_correcciones_ensayos.csv"))
 
 cat("\nArchivos exportados en: ", normalizePath(carpeta_salida), "\n", sep = "")
 cat("  - resultados_simce_rbd_corregido.csv   (datos corregidos + outlier_iqr + outlier_isoforest)\n")

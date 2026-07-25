@@ -386,8 +386,8 @@ cat("Sin resolver (requieren revisión manual):",
 
 write_xlsx(resultados_clasificados, archivo_salida)
 
-resultados_clasificados |>
-  filter(is.na(rbd_santillana)) |>
-  arrange(clasificacion) |>
-  select(colegio, Nombre_SIMCE, Estado, Similitud_nombre, clasificacion) |>
-  view()
+# resultados_clasificados |>
+#   filter(is.na(rbd_santillana)) |>
+#   arrange(clasificacion) |>
+#   select(colegio, Nombre_SIMCE, Estado, Similitud_nombre, clasificacion) |>
+#   view()
