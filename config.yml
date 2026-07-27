@@ -17,3 +17,8 @@ abelo:
   ruta_data_in: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/data_in/simce_agencia_calidad_educacion"
   ruta_data_intermedia: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/data_intermedia"
   ruta_outputs: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/data_out/simce_agencia_calidad_educacion"
+
+aolivaresr:
+  ruta_data_in: "C:/Users/aolivaresr/Desktop/modelo-simce-datos/data_in/"
+  ruta_data_intermedia: "C:/Users/aolivaresr/Desktop/modelo-simce-datos/data_intermedia/"
+  ruta_outputs: "C:/Users/aolivaresr/Desktop/santillana/modelo-simce-datos/data_out/"
