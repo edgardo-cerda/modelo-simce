@@ -256,24 +256,21 @@ comparacion_simce <- simce_4b2m %>%
   group_by(agno, grado_lbl, area_lbl, en_santillana) %>%
   summarise(
     promedio_simce_medio = mean(promedio_simce),
+    p25_promedio_simce = quantile(promedio_simce, probs = 0.25, na.rm = TRUE),
+    p75_promedio_simce = quantile(promedio_simce, probs = 0.75, na.rm = TRUE),
     n_colegios           = n(),
     .groups = "drop"
   ) %>%
   arrange(agno, grado_lbl, area_lbl, desc(en_santillana))
 ```
 
-```{r comparacion-simce-tabla}
-tabla_dt(
-  comparacion_simce,
-  caption = "Promedio SIMCE oficial: colegios presentes vs. no presentes en la base Santillana (sólo 4° Básico y 2° Medio)"
-)
-```
-
 ```{r comparacion-simce-plot}
 p4 <- ggplot(
   comparacion_simce,
   aes(
-    x = factor(agno), y = promedio_simce_medio, color = en_santillana,
+    x = factor(agno), y = promedio_simce_medio, 
+    color = en_santillana,
+    fill = en_santillana,
     group = interaction(en_santillana, grado_lbl, area_lbl),
     text = paste0(
       "Año: ", agno, "<br>Grado: ", grado_lbl, "<br>Área: ", area_lbl,
@@ -285,13 +282,15 @@ p4 <- ggplot(
   geom_point() + 
   geom_line() +
   ylim(0, NA) +
-  facet_grid(grado_lbl ~ area_lbl) +
+  geom_ribbon(aes(ymin = p25_promedio_simce, ymax = p75_promedio_simce), alpha = .25, color = NA) +
+  facet_grid(area_lbl ~ grado_lbl) +
   labs(
-    x = "Año", y = "Promedio SIMCE", fill = NULL,
+    x = "Año", y = "Promedio SIMCE", fill = NULL, color = NULL,
     title = "Promedio SIMCE según presencia del colegio en la base de ensayos Santillana"
   ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
+  theme_minimal()+
+  guides(fill = "none") +
+  theme(legend.position = "bottom") 
 
 ggplotly(p4, tooltip = "text") %>%
   layout(legend = list(orientation = "h", y = -0.15))
@@ -315,7 +314,7 @@ logro_resumen <- santillana %>%
   ) %>%
   arrange(agno, grado_lbl, area_lbl)
 
-tabla_dt(logro_resumen, caption = "Porcentaje de logro promedio en la base Santillana, por año, grado y área")
+# tabla_dt(logro_resumen, caption = "Porcentaje de logro promedio en la base Santillana, por año, grado y área")
 ```
 
 ```{r logro-plot}
@@ -358,10 +357,10 @@ logro_colegio <- santillana %>%
   ) %>%
   arrange(agno, grado_lbl, area_lbl, desc(porcentaje_logro_medio))
 
-tabla_dt(logro_colegio, caption = "% de logro promedio por colegio (base Santillana)", pageLength = 15)
+# tabla_dt(logro_colegio, caption = "% de logro promedio por colegio (base Santillana)", pageLength = 15)
 ```
 
-## 2.3 % de logro Santillana vs. promedio SIMCE oficial (correlación)
+## 2.3 Porcentaje de logro Santillana vs. promedio SIMCE oficial (correlación)
 
 Se calcula, por colegio-año-grado-área, el % de logro promedio en Santillana y se compara contra el promedio SIMCE oficial del mismo colegio-año-grado-área.
 
@@ -371,6 +370,7 @@ sant_colegio <- santillana %>%
   group_by(agno, grado, grado_lbl, area, area_lbl, rbd, colegio) %>%
   summarise(
     porcentaje_logro_medio = mean(porcentaje_logro),
+    n_ensayos = n(),
     n_alumnos              = n_distinct(id_usuario_curso),
     .groups = "drop"
   )
@@ -425,7 +425,7 @@ p6 <- ggplot(
 ) +
   geom_point(alpha = 0.6, size = 2) +
   geom_smooth(method = "lm", se = FALSE, color = "grey30", linewidth = 0.6) +
-  facet_grid(grado_lbl ~ area_lbl) +
+  facet_grid(area_lbl ~ grado_lbl) +
   geom_text(
     data = anotaciones, aes(x = -Inf, y = Inf, label = label),
     inherit.aes = FALSE, hjust = -0.2, vjust = 1.5, size = 3.5, color = "grey20"
@@ -444,11 +444,21 @@ ggplotly(p6, tooltip = "text")
 ```{r correlacion-detalle}
 tabla_dt(
   comparacion_colegio %>%
-    select(agno, grado_lbl, area_lbl, colegio, nom_rbd, n_alumnos, porcentaje_logro_medio, promedio_simce) %>%
-    arrange(agno, grado_lbl, area_lbl, desc(porcentaje_logro_medio)),
+    select(agno, grado_lbl, area_lbl, colegio, porcentaje_logro_medio, promedio_simce, n_ensayos) %>%
+    mutate(ratio = promedio_simce/porcentaje_logro_medio) %>% 
+    arrange(ratio),
   caption = "Detalle por colegio: % de logro Santillana vs. promedio SIMCE oficial",
   pageLength = 15
 )
+```
+
+```{r}
+comparacion_colegio %>% 
+      mutate(ratio = promedio_simce/porcentaje_logro_medio,
+             agno = factor(agno)) %>% 
+  ggplot(aes(x = ratio)) +
+  geom_density(alpha = .3) +
+  facet_wrap(grado_lbl ~ area_lbl)
 ```
 
 ---
