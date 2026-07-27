@@ -26,5 +26,86 @@ generar_ruta <- function(){
   
 }
 
+## Generar data pre reporte irt ----
+### Genera la unificación de datos previo a los reportes irt
 
+generar_data_pre_irt <- function(data,n_ensayos,asignatura,nivel){
+  # Generar selección por nivel y separar po número de ensayo 
+  data_por_ensayo_materia<-map(n_ensayos  
+                               ,~data[str_detect(names(data)
+                                                           ,paste0(asignatura
+                                                                   ,"_"
+                                                                   ,nivel
+                                                                   ,"_ensayo",.x))]
+  )
+  #unificar por n ensayo para ingresar a modelo irt  
+  data_unificada <- map(n_ensayos
+                        ,~bind_rows(data_por_ensayo_materia[[.x]])
+                        
+  )
+  
+  return(data_unificada)  
+  
+}
+
+## Generar modelo IRT ----
+
+generar_modelo_irt <- function(data_mirt,asignatura,ensayos){
+  # Ajustar nombre de variables 
+  data_mirt <- data_mirt[[asignatura]][[ensayos]] %>%
+    rename("nombre_apellido" = "nombre_y_apellido"
+           ,"cod_item"="item"
+           ,"item" = "item_no"
+           ,"alt_correcta" = "alternativa_correcta"
+           ,"alt_incorrecta" = "alternativa_incorrecta") %>% 
+    mutate(rev_item = alt_correcta)
+  
+  pdt_irt <- data_mirt %>%
+    mutate(rev_item = alt_correcta ) %>% 
+    dplyr::select(nombre_apellido, item, rev_item,curso ) %>%
+    arrange(item) %>%  # Ordenar por ítem de manera ascendente
+    group_by(nombre_apellido) %>%
+    pivot_wider(names_from = "item",
+                values_from = "rev_item",
+                names_prefix = "item_") %>%
+    ungroup() %>% 
+    dplyr::select(-c(nombre_apellido,curso))
+  
+  
+  # Convertir cada columna de `pdt_irt` en vector numérico
+  sapply(pdt_irt, length)
+  sapply(pdt_irt, class)
+  pdt_irt <- as.data.frame(lapply(pdt_irt, function(col) as.numeric(unlist(col))))
+  
+  # Generar modelo irt
+  pdt_irt3pl <- tpm(pdt_irt, type = "latent.trait",IRT.param = TRUE)
+  
+  print("se crea modelo tres parámetros")
+  
+  # Generar data con los coeficientes
+  data_resumen<-coef(pdt_irt3pl, prob = TRUE) %>% 
+    as.data.frame() %>%
+    clean_names() %>% 
+    summarise(
+      mean_gussng = round(mean(gussng),2)
+      ,min_gussng = round(min(gussng),2)
+      ,max_gussng = round(max(gussng),2)
+      ,mean_dffclt= round(mean(dffclt),2)
+      ,min_dffclt= round(min(dffclt),2)
+      ,max_dffclt= round(max(dffclt),2)
+      ,.groups = "drop"
+    ) %>% 
+    mutate(
+      n_ensayo = ensayos
+    )
+  
+  print("fin ejecución tabulado resumen")
+  
+  
+  
+  #salida función 
+  return(data_resumen)
+  
+  
+}
 

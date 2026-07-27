@@ -1,26 +1,29 @@
 
+# #Funciones ----
+# source("funciones/funciones_proyecto_simce.R")
+# rutas <- generar_ruta()
+# ruta_data_in <- rutas$ruta_data_in
+# ruta_data_intermedia <- rutas$ruta_data_intermedia
 
+
+
+generar_data_pre_irt <- function(ruta_data_in,ruta_data_intermedia){
+  
 
 # Librerías ----
-library(readxl)
-library(writexl)
-library(janitor)
-library(purrr)
-library(arrow)
-library(tidyverse)
-library(dplyr)
-library(readxl)
-library(writexl)
-#Funciones ----
-source("funciones/funciones_proyecto_simce.R")
-
-# Generar rutas 
-rutas <- generar_ruta()
-ruta_data_in <- rutas$ruta_data_in
-ruta_data_intermedia <- rutas$ruta_data_intermedia
+require(readxl)
+require(writexl)
+require(janitor)
+require(purrr)
+require(arrow)
+require(tidyverse)
+require(dplyr)
+require(readxl)
+require(writexl)
 
 # Cargar datos ----
 ## Parámetros
+# Generar rutas 
 
 
 ## generar ruta archivo de ensayos ----
@@ -201,5 +204,7 @@ write_rds(data_revisada,paste0(
 ))
 
 print("Se escribe salida de datos en RDS")
+
+}
 
 
