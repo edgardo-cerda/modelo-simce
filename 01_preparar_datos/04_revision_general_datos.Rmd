@@ -426,8 +426,8 @@ comparacion %>%
 
 ```{r cons-ens-simce}
 agg_ens <- ensayos %>%
-  filter(!is.na(rbd_revisado), porcentaje_logro <= 100) %>%
-  mutate(rbd = as.integer(rbd_revisado)) %>%
+  filter(!is.na(rbd), porcentaje_logro <= 100) %>%
+  mutate(rbd = as.integer(rbd)) %>%
   group_by(agno, grado, rbd, area) %>%
   summarise(logro_ensayo = mean(porcentaje_logro), n_reg = n(), .groups = "drop")
 
@@ -583,8 +583,8 @@ tribble(
     percent(mean(is.na(simce_alu$ptje_lect)), .1), "Excluidos por variable",
   "Ensayos", "Porcentaje de logro > 100",
     comma(sum(ensayos$porcentaje_logro > 100, na.rm = TRUE)), "Excluidos de cruces con SIMCE",
-  "Ensayos", "RBD faltante tras revisión (rbd_revisado)",
-    comma(sum(is.na(ensayos$rbd_revisado))), "No cruzables con SIMCE",
+  "Ensayos", "RBD faltante tras revisión (rbd)",
+    comma(sum(is.na(ensayos$rbd))), "No cruzables con SIMCE",
   "Ensayos", "Nombres de alumnos en texto plano (columna nombre)",
     "toda la base", "Riesgo de privacidad: anonimizar"
 ) %>%
