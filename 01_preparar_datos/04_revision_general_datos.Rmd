@@ -58,7 +58,7 @@ simce_rbd <- ruta_data_intermedia |>
   file.path('simce', 'consolidado_datos_simce_rbd.parquet') |> 
   arrow::read_parquet()
 ensayos    <- ruta_data_intermedia |>  
-  file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet') |> 
+  file.path('ensayo_santillana', 'consolidado_ensayo_santillana.parquet') |> 
   arrow::read_parquet()
 
 simce_alu <- ruta_data_intermedia |>  
