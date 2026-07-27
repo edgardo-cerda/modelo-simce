@@ -20,6 +20,7 @@ require(tidyverse)
 require(dplyr)
 require(readxl)
 require(writexl)
+require(readr)
 
 # Cargar datos ----
 ## Parámetros
@@ -198,7 +199,7 @@ nombre_salida <- str_to_lower(paste0(
 # nombfar objetos lista
 names(data_revisada)=nombre_salida
 
-write_rds(data_revisada,paste0(
+saveRDS(data_revisada,paste0(
   ruta_data_intermedia
   ,"datos_procesados_irt.rds"
 ))

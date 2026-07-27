@@ -22,22 +22,8 @@ knitr::opts_chunk$set(echo = F, warning = F, message = F)
 ```
 
 ```{r}
-library(readr)
-library(readxl)
-library(stringr)
-library(flextable)
-library(tidyr)
-library(janitor)
-library(MASS)
-library(dplyr)
-library(tidyverse)
-library(polycor)
-library(ltm)
-library(KernSmoothIRT)
-library(psych)
-library(flextable)
-library(htmltools)
-library(arrow)
+
+
 ```
 
 ```{r, out.width="350px"}

@@ -30,6 +30,12 @@ generar_ruta <- function(){
 ### Genera la unificación de datos previo a los reportes irt
 
 generar_data_pre_irt <- function(data,n_ensayos,asignatura,nivel){
+  
+  require(purrr)
+  require(readr)
+  require(tidyverse)
+  require(arrow)
+  require(dplyr)
   # Generar selección por nivel y separar po número de ensayo 
   data_por_ensayo_materia<-map(n_ensayos  
                                ,~data[str_detect(names(data)
@@ -49,10 +55,14 @@ generar_data_pre_irt <- function(data,n_ensayos,asignatura,nivel){
 }
 
 ## Generar modelo IRT ----
-
-generar_modelo_irt <- function(data_mirt,asignatura,ensayos){
+generar_modelo_irt <- function(data_input,asignatura,ensayos){
+  require(purrr)
+  require(readr)
+  require(tidyverse)
+  require(arrow)
+  require(dplyr)
   # Ajustar nombre de variables 
-  data_mirt <- data_mirt[[asignatura]][[ensayos]] %>%
+  data_mirt <- data_input[[asignatura]][[ensayos]] %>%
     rename("nombre_apellido" = "nombre_y_apellido"
            ,"cod_item"="item"
            ,"item" = "item_no"
@@ -69,12 +79,15 @@ generar_modelo_irt <- function(data_mirt,asignatura,ensayos){
                 values_from = "rev_item",
                 names_prefix = "item_") %>%
     ungroup() %>% 
-    dplyr::select(-c(nombre_apellido,curso))
+    dplyr::select(-c(nombre_apellido,curso)) 
   
+
+  
+  
+    
   
   # Convertir cada columna de `pdt_irt` en vector numérico
-  sapply(pdt_irt, length)
-  sapply(pdt_irt, class)
+
   pdt_irt <- as.data.frame(lapply(pdt_irt, function(col) as.numeric(unlist(col))))
   
   # Generar modelo irt

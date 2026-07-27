@@ -17,3 +17,8 @@ abelo:
   ruta_data_in: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/modelo-simce-datos/data_in/"
   ruta_data_intermedia: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/modelo-simce-datos/data_intermedia/"
   ruta_outputs: "C:/Users/abelo/OneDrive/Trabajos Freelance/santillana/modelo-simce-datos/data_out/"
+  
+aolivaresr:
+  ruta_data_in: "C:/Users/aolivaresr/Desktop/modelo-simce-datos/data_in/"
+  ruta_data_intermedia: "C:/Users/aolivaresr/Desktop/modelo-simce-datos/data_intermedia/"
+  ruta_outputs: "C:/Users/aolivaresr/Desktop/santillana/modelo-simce-datos/data_out/"

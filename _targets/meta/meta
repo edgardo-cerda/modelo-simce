@@ -1,8 +1,8 @@
 name|type|data|command|depend|seed|path|time|size|bytes|format|repository|iteration|parent|children|seconds|warnings|error
-rutas|stem|937bbca42a79106c|5588e11529fdf8b4|46b3c97d44b62237|-859073061||t20661.1762997966s|s194b|194|rds|local|vector|||0.03||
-bbdd_pre_irt|stem|4fe15855ae6aad39|e8b692b92910ae5c|689f4b7d95174d68|-1930752770||t20661.1774331446s|s86b|86|rds|local|vector|||97.8|package 'janitor' was built under R version 4.3.2. package 'arrow' was built under R version 4.3.3. package 'tidyverse' was built under R version 4.3.3. package 'dplyr' was built under R version 4.3.3|
-generar_modelo_irt|function|d13b63e594ec415e
-generar_data_pre_irt|function|61f6a131277c945c
-generar_ruta|function|a957ddb6bfa250cb
-generar_tabulado_agregado_irt|function|54daaa979d9b1dc0
 bbdd_irt_resumen|stem||98b34255b305729b|8c718c00484c9bbe|-2032676169||t20661.1774943123s||0|rds|local|vector|||3.7|package 'janitor' was built under R version 4.3.2. package 'tidyverse' was built under R version 4.3.3. package 'dplyr' was built under R version 4.3.3. package 'ltm' was built under R version 4.3.3. package 'msm' was built under R version 4.3.3. package 'KernSmoothIRT' was built under R version 4.3.3. package 'arrow' was built under R version 4.3.3|ℹ In index: 1. Caused by error in `map()`: ℹ In index: 1. Caused by error in `bind_rows()`: ! Argument 1 must be a data frame or a named atomic vector.
+generar_modelo_irt|function|d574a428edfabb84
+generar_data_pre_irt|function|60fab5adc952c62e
+generar_ruta|function|a957ddb6bfa250cb
+generar_tabulado_agregado_irt|function|a9e5d3165c817b18
+rutas|stem|9c51616c9d56c2ca|5588e11529fdf8b4|46b3c97d44b62237|-859073061||t20661.677523668s|s184b|184|rds|local|vector|||0.015||
+bbdd_pre_irt|stem|4ca2efd91c2fd118|e8b692b92910ae5c|3b78778c7ed3f0b1|-1930752770||t20661.6785891741s|s86b|86|rds|local|vector|||91.985|package 'arrow' was built under R version 4.5.3. package 'lubridate' was built under R version 4.5.3|
