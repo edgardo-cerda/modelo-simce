@@ -32,17 +32,23 @@ ruta_archivos_brutos_simce_desduplicado <-
   pull(base)
 
 # Los datos usan separadores inconsistentes, así que agrego una función para detectarlo automático y cargar los datos:
-identificar_separadores <- function(ruta_archivo) {
-  # 1. Leer una muestra de las primeras 100 líneas como texto plano
-  lineas <- read_lines(ruta_archivo, n_max = 100)
-  texto_completo <- paste(lineas, collapse = "\n")
+#
+# La corrección: ampliar la muestra usada para detectar el separador decimal
+# (para tener más chances de encontrar celdas con puntaje) y, si aun así no
+# se encuentra ningún patrón decimal, no asumir "," en base al delimitador.
+identificar_separadores <- function(ruta_archivo, n_muestra_decimal = 5000) {
+  lineas <- read_lines(ruta_archivo, n_max = n_muestra_decimal)
+  
+  # 1. Para el delimitador basta con las primeras líneas (aparece en TODAS
+  #    las filas, tengan o no puntaje), así que usamos solo ese subconjunto:
+  texto_delim <- paste(head(lineas, 100), collapse = "\n")
   
   # 2. Identificar el separador de columnas (delimitador)
   # Contamos cuántas veces aparece cada uno en la muestra
   conteos_delim <- c(
-    "," = str_count(texto_completo, ","),
-    ";" = str_count(texto_completo, ";"),
-    "|" = str_count(texto_completo, "\\|")
+    "," = str_count(texto_delim, ","),
+    ";" = str_count(texto_delim, ";"),
+    "|" = str_count(texto_delim, "\\|")
   )
   
   # Seleccionamos el que tenga mayor presencia
@@ -53,10 +59,12 @@ identificar_separadores <- function(ruta_archivo) {
     delimitador_predilecto <- ","
   }
   
-  # 3. Identificar el separador decimal
+  # 3. Identificar el separador decimal.
+  texto_decimal <- paste(lineas, collapse = "\n")
+  
   # Buscamos patrones numéricos explícitos: número-punto-número vs número-coma-número
-  con_punto <- str_detect(texto_completo, "[0-9]+\\.[0-9]+")
-  con_coma  <- str_detect(texto_completo, "[0-9]+,[0-9]+")
+  con_punto <- str_detect(texto_decimal, "[0-9]+\\.[0-9]+")
+  con_coma  <- str_detect(texto_decimal, "[0-9]+,[0-9]+")
   
   if (con_punto && !con_coma) {
     decimal_predilecto <- "."
@@ -71,8 +79,16 @@ identificar_separadores <- function(ruta_archivo) {
       decimal_predilecto <- "," 
     }
   } else {
-    # Si no se detectan números con decimales, usamos el estándar según el delimitador
-    decimal_predilecto <- ifelse(delimitador_predilecto == ",", ".", ",")
+    # No se encontró NINGÚN número con decimales, ni con "." ni con ",", ni
+    # siquiera en la muestra ampliada. En vez de adivinar en base al
+    # delimitador (supuesto que resultó ser incorrecto para esta fuente:
+    # los archivos SIMCE usan ";" + "." y no ";" + ","), avisamos y usamos
+    # "." como valor por defecto, que es el estándar observado en todos los
+    # archivos de esta fuente revisados hasta ahora.
+    warning(paste0("No se detectaron decimales en la muestra de ", ruta_archivo,
+                   " (ni con '.' ni con ','). Se usará '.' por defecto: ",
+                   "verifica manualmente este archivo."))
+    decimal_predilecto <- "."
   }
   
   # Retornar los resultados en una lista estructurada
@@ -80,6 +96,25 @@ identificar_separadores <- function(ruta_archivo) {
     separador_columnas = delimitador_predilecto,
     separador_decimal  = decimal_predilecto
   ))
+}
+
+# Chequeo de sanidad: los puntajes SIMCE (por alumno) siempre caen dentro de
+# un rango conocido. Si tras la carga aparecen valores fuera de ese rango,
+# es señal de un problema de parseo (como el que motivó esta corrección) y
+# no de un valor legítimo, así que lo dejamos como una alerta explícita en
+# vez de fallar en silencio.
+validar_rango_puntajes <- function(datos, columnas, rango = c(100, 500)) {
+  for (col in columnas) {
+    fuera_de_rango <- datos |>
+      filter(!is.na(.data[[col]]) & (.data[[col]] < rango[1] | .data[[col]] > rango[2]))
+    if (nrow(fuera_de_rango) > 0) {
+      resumen <- fuera_de_rango |> count(agno, grado, name = "n_casos_fuera_de_rango")
+      warning(paste0(nrow(fuera_de_rango), " valores de '", col,
+                     "' fuera del rango plausible [", rango[1], ", ", rango[2],
+                     "]. Revisa por agno/grado:\n",
+                     paste(capture.output(print(resumen)), collapse = "\n")))
+    }
+  }
 }
 
 # Cargar y leer los archivos, para después consolidarlos: ----
@@ -128,22 +163,21 @@ datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |>
   map(~{
     # Homologar nombres y tipos de datos:
     data_vars_seleccionadas <- .x |> 
-        select(agno, grado, idalumno, mrun, rbd, dvrbd, cod_curso,
-               starts_with(c('ptje_mate', 'ptje_lect', 'eem_mate', 'eem_lect', 'eda_mate', 'eda_lect')))
+      select(agno, grado, idalumno, mrun, rbd, dvrbd, cod_curso,
+             starts_with(c('ptje_mate', 'ptje_lect', 'eem_mate', 'eem_lect', 'eda_mate', 'eda_lect')))
     names(data_vars_seleccionadas) <- str_remove_all(names(data_vars_seleccionadas),
                                                      '(4b|8b|2m|6b)_alu')
     data_homologada <- data_vars_seleccionadas |> 
       mutate(across(contains(c('ptje', 'eem', 'eda')), as.numeric))
     return(data_homologada)
-    }
-    ) |> 
-  list_rbind() |> 
-  # Corregir casos que por alguna razón sigue saliendo con error:
-  mutate(
-    ptje_mate = ifelse(agno == 2024 & grado == '2m', ptje_mate/100, ptje_mate),
-    ptje_lect = ifelse(agno == 2024 & grado == '2m', ptje_lect/100, ptje_lect)
-  )
-  
+  }
+  ) |> 
+  list_rbind()
+
+# Chequeo de sanidad: alerta (no detiene la ejecución) si aparecen puntajes
+# fuera de rango plausible, para detectar a tiempo problemas de parseo futuros:
+validar_rango_puntajes(datos_simce_alu_mrun_consolidado, c('ptje_mate', 'ptje_lect'))
+
 datos_simce_alu_mrun_consolidado |> 
   write_parquet(file.path(dir_salida, 'consolidado_datos_simce_alu.parquet'))
 
@@ -155,20 +189,20 @@ datos_simce_rbd_consolidado <- datos_simce_rbd |>
   map(~{
     # Homologar nombres y tipos de datos:
     data_vars_seleccionadas <- .x |>
-        select(agno, grado, rbd, dvrbd, nom_rbd, cod_com_rbd, nom_com_rbd,
-               cod_depe1, cod_depe2, cod_grupo, cod_rural_rbd,
-               starts_with(c('nalu_lect', 'nalu_mate',
-                             'prom_lect', 'prom_mate',
-                             'palu_eda_ins_lect', 'palu_eda_ele_lect', 'palu_eda_ade_lect',
-                             'palu_eda_ins_mate', 'palu_eda_ele_mate', 'palu_eda_ade_mate'
-                             )))
+      select(agno, grado, rbd, dvrbd, nom_rbd, cod_com_rbd, nom_com_rbd,
+             cod_depe1, cod_depe2, cod_grupo, cod_rural_rbd,
+             starts_with(c('nalu_lect', 'nalu_mate',
+                           'prom_lect', 'prom_mate',
+                           'palu_eda_ins_lect', 'palu_eda_ele_lect', 'palu_eda_ade_lect',
+                           'palu_eda_ins_mate', 'palu_eda_ele_mate', 'palu_eda_ade_mate'
+             )))
     names(data_vars_seleccionadas) <- str_remove_all(names(data_vars_seleccionadas),
                                                      '(4b|8b|2m|6b)_rbd')
     data_homologada <- data_vars_seleccionadas |>
       mutate(across(contains(c('nalu', 'prom', 'palu')), as.numeric))
     return(data_homologada)
-    }
-    ) |> 
+  }
+  ) |> 
   list_rbind() 
 
 # Pasar resultados por area a formato largo:
@@ -177,9 +211,9 @@ datos_simce_rbd_consolidado_long <- datos_simce_rbd_consolidado |>
   select(-starts_with('palu')) |> 
   pivot_longer(
     cols = starts_with(c('nalu', 'prom')),
-                       names_to = c(".value", "area"),
-                       names_pattern = "(.*)_(.*)"
-                       ) |> 
+    names_to = c(".value", "area"),
+    names_pattern = "(.*)_(.*)"
+  ) |> 
   mutate(area = ifelse(str_detect(area, 'lect'), 'lenguaje', 'matematica'),
          agno = as.numeric(agno)) |> 
   rename(promedio_simce = prom)
