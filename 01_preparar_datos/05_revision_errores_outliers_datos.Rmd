@@ -79,7 +79,7 @@ resultados <- ruta_data_intermedia |>
   file.path('simce', 'consolidado_datos_simce_rbd.parquet') |> 
   arrow::read_parquet()
 ensayos    <- ruta_data_intermedia |>  
-  file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet') |> 
+  file.path('ensayo_santillana', 'consolidado_ensayo_santillana.parquet') |> 
   arrow::read_parquet()
 
 # Log de issues que se va llenando a lo largo del reporte

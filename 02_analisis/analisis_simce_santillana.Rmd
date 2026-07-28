@@ -1,0 +1,471 @@
+---
+title: "Análisis de Ensayos Santillana y Resultados SIMCE"
+subtitle: "Cobertura, resultados y correlación entre ensayos y SIMCE oficial"
+date: "`r format(Sys.Date(), '%d-%m-%Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: false
+    theme: flatly
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                       fig.width = 9, fig.height = 5.5)
+
+# Aseguramos una configuración regional UTF-8 para que nombres de colegios,
+# comunas, etc. con tildes/ñ se muestren correctamente al renderizar.
+invisible(try(Sys.setlocale("LC_ALL", "es_ES.UTF-8"), silent = TRUE))
+invisible(try(Sys.setlocale("LC_ALL", "en_US.UTF-8"), silent = TRUE))
+invisible(try(Sys.setlocale("LC_ALL", "C.UTF-8"),      silent = TRUE))
+
+library(tidyverse)
+library(arrow)
+library(DT)
+library(plotly)
+library(scales)
+
+```
+
+## Acerca de este informe
+
+Este documento carga y analiza los tres insumos consolidados suministrados:
+
+- ensayos/preparación Simce de Santillana 2023-2025 (nivel alumno-evaluación), con el RBD ya revisado/corregido y marcas de valores atípicos (`outlier_iqr`, `outlier_isoforest`).
+- resultados oficiales SIMCE por colegio (RBD) 2022-2025, con puntaje promedio y matrícula evaluada (`nalu`) por año, grado y área.
+- base SIMCE a nivel de alumno 2022-2025, usada aquí para calcular con precisión la matrícula evaluada por colegio (conteo de alumnos únicos), en vez de promediar el campo `nalu` entre áreas.
+
+Estos tres archivos ya consolidan y corrigen los insumos originales entregados por separado (planillas de ensayos por grado/año y reportes SIMCE por RBD), por lo que el análisis se construye directamente sobre ellos.
+
+Todas las tablas son interactivas (buscar, ordenar, filtrar por columna, exportar) gracias a **DT**, y todos los gráficos son interactivos (zoom, hover, panning, ocultar series) gracias a **plotly**.
+
+```{r funciones-auxiliares}
+# Tabla DT estandarizada, con formato de decimales sólo en columnas no-enteras
+tabla_dt <- function(df, caption = NULL, pageLength = 10, filter = "top") {
+  df <- as.data.frame(df)
+  num_cols   <- names(df)[sapply(df, is.numeric)]
+  round_cols <- num_cols[sapply(df[num_cols], function(x) any(x != floor(x), na.rm = TRUE))]
+
+  dt <- DT::datatable(
+    df,
+    caption  = caption,
+    rownames = FALSE,
+    options = list(
+      pageLength = pageLength,
+      scrollX    = TRUE,
+      dom        = "rtip"
+    )
+  )
+  if (length(round_cols) > 0) dt <- DT::formatRound(dt, columns = round_cols, digits = 2)
+  dt
+}
+
+etiquetas_grado <- c("4b" = "4° Básico", "2m" = "2° Medio", "6b" = "6° Básico", "8b" = "8° Básico")
+etiquetas_area  <- c("lenguaje" = "Lenguaje", "matematica" = "Matemática")
+```
+
+## Carga de datos
+
+```{r carga-datos}
+
+# Configurar rutas de archivos: ----
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
+
+ruta_data_in <- rutas$ruta_data_in
+ruta_data_intermedia <- rutas$ruta_data_intermedia
+
+simce_rbd_raw <- ruta_data_intermedia |>  
+  file.path('simce', 'resultados_simce_rbd_corregido.parquet') |> 
+  arrow::read_parquet()
+santillana_raw    <- ruta_data_intermedia |>  
+  file.path('ensayo_santillana', 'ensayos_santillana_corregido.parquet') |> 
+  arrow::read_parquet()
+
+simce_alu_raw <- ruta_data_intermedia |>  
+  file.path('simce', 'consolidado_datos_simce_alu.parquet') |> 
+  arrow::read_parquet()
+```
+
+```{r limpieza}
+santillana <- santillana_raw %>%
+  mutate(
+    agno      = as.integer(agno),
+    rbd       = as.integer(rbd),        # ya corregido (rbd == rbd_revisado)
+    grado_lbl = unname(etiquetas_grado[grado]),
+    area_lbl  = unname(etiquetas_area[area])
+  )
+
+simce_rbd <- simce_rbd_raw %>%
+  mutate(
+    agno      = as.integer(agno),
+    rbd       = as.integer(rbd),
+    grado_lbl = unname(etiquetas_grado[grado]),
+    area_lbl  = unname(etiquetas_area[area])
+  )
+
+simce_alu <- simce_alu_raw %>%
+  mutate(
+    agno      = as.integer(agno),
+    rbd       = as.integer(rbd),
+    grado_lbl = unname(etiquetas_grado[grado])
+  )
+```
+
+---
+
+# 1. Cobertura de la base de ensayos Santillana
+
+## 1.1 Observaciones totales por año, grado y área
+
+Cantidad de filas (evaluaciones rendidas) registradas en la base Santillana.
+
+```{r obs-tabla}
+obs_resumen <- santillana %>%
+  count(agno, grado_lbl, area_lbl, name = "n_observaciones") %>%
+  arrange(agno, grado_lbl)
+
+tabla_dt(obs_resumen |> 
+             pivot_wider(names_from = area_lbl,
+              values_from = n_observaciones), 
+         caption = "Observaciones (filas) en la base de ensayos Santillana, por año, grado y área")
+```
+
+```{r obs-plot}
+p1 <- ggplot(
+  obs_resumen,
+  aes(
+    x = factor(agno), y = n_observaciones, fill = area_lbl,
+    text = paste0(
+      "Año: ", agno, "<br>Grado: ", grado_lbl,
+      "<br>Área: ", area_lbl, "<br>Observaciones: ", comma(n_observaciones)
+    )
+  )
+) +
+  geom_col(position = "dodge") +
+  facet_wrap(~grado_lbl) +
+  scale_y_continuous(labels = comma) +
+  labs(
+    x = "Año", y = "N° de observaciones", fill = "Área",
+    title = "Observaciones en la base Santillana por año, grado y área"
+  ) +
+  theme_minimal()
+
+ggplotly(p1, tooltip = "text")
+```
+
+## 1.2 Alumnos únicos, colegios y promedio de alumnos por colegio, por año
+
+Se cuentan alumnos únicos mediante `id_usuario_curso` (identificador estable de alumno-curso, sin duplicarse entre las evaluaciones de un mismo año) y colegios únicos mediante el RBD corregido.
+
+```{r alumnos-colegios-tabla}
+resumen_anio <- santillana %>%
+  filter(!is.na(rbd)) %>%
+  group_by(agno) %>%
+  summarise(
+    n_colegios       = n_distinct(rbd),
+    n_alumnos = n_distinct(id_usuario_curso),
+    .groups = "drop"
+  ) %>%
+  mutate(alumnos_promedio_colegio = n_alumnos / n_colegios) %>%
+  arrange(agno)
+
+tabla_dt(resumen_anio, caption = "Alumnos únicos, colegios y promedio de alumnos por colegio, por año (base Santillana)")
+```
+
+
+## 1.3 Cobertura: alumnos únicos Santillana vs. alumnos evaluados en SIMCE en esos mismos colegios
+
+Para cada año y grado, se identifican los colegios (RBD) presentes en Santillana y se calcula cuántos alumnos rindieron el SIMCE oficial en esos mismos colegios (usando la base alumno-nivel, contando `idalumno` únicos). La cobertura es la razón entre alumnos evaluados por Santillana y esa matrícula SIMCE.
+
+```{r cobertura-prep}
+rbds_por_grupo <- santillana %>%
+  filter(!is.na(rbd)) %>%
+  distinct(agno, grado, grado_lbl, rbd)
+
+santillana_alumnos_grupo <- santillana %>%
+  filter(!is.na(rbd)) %>%
+  group_by(agno, grado, grado_lbl) %>%
+  summarise(n_alumnos_santillana = n_distinct(id_usuario_curso), .groups = "drop")
+
+alumnos_simce_colegios <- rbds_por_grupo %>%
+  left_join(simce_alu %>% select(agno, grado, rbd, idalumno), by = c("agno", "grado", "rbd")) %>%
+  group_by(agno, grado) %>%
+  summarise(n_alumnos_simce_colegios = n_distinct(idalumno[!is.na(idalumno)]), .groups = "drop")
+
+cobertura <- santillana_alumnos_grupo %>%
+  left_join(alumnos_simce_colegios, by = c("agno", "grado")) %>%
+  mutate(cobertura_pct = 100 * n_alumnos_santillana / n_alumnos_simce_colegios) %>%
+  arrange(agno, grado_lbl)
+```
+
+```{r cobertura-tabla}
+tabla_dt(
+  cobertura %>% select(agno, grado_lbl, n_alumnos_santillana, n_alumnos_simce_colegios, cobertura_pct),
+  caption = "Cobertura de la base Santillana respecto a la matrícula SIMCE de los mismos colegios, por año y grado"
+)
+```
+
+```{r cobertura-plot}
+p3 <- ggplot(
+  cobertura,
+  aes(
+    x = factor(agno), y = cobertura_pct, fill = grado_lbl,
+    text = paste0(
+      "Año: ", agno, "<br>Grado: ", grado_lbl, "<br>Cobertura: ", round(cobertura_pct, 1), "%",
+      "<br>Alumnos Santillana: ", comma(n_alumnos_santillana),
+      "<br>Alumnos en colegios SIMCE: ", comma(n_alumnos_simce_colegios)
+    )
+  )
+) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = 100, linetype = "dashed", color = "grey40") +
+  labs(
+    x = "Año", y = "Cobertura (%)", fill = "Grado",
+    title = "Cobertura de la base Santillana respecto a la matrícula evaluada en SIMCE"
+  ) +
+  theme_minimal()
+
+ggplotly(p3, tooltip = "text")
+```
+
+---
+
+# 2. Comparación con resultados oficiales SIMCE
+
+## 2.1 Promedio SIMCE: colegios presentes vs. no presentes en la base Santillana
+
+Se consideran únicamente 4° Básico y 2° Medio (únicos grados presentes en Santillana), y sólo los años en que existen datos Santillana (`r paste(sort(unique(santillana$agno)), collapse = ", ")`). Un colegio se considera "presente" en Santillana ese año/grado si tiene al menos un registro, sin importar el área.
+
+```{r comparacion-simce-prep}
+rbds_sant_por_grupo <- santillana %>%
+  filter(!is.na(rbd)) %>%
+  distinct(agno, grado, rbd) %>%
+  mutate(en_santillana = TRUE)
+
+simce_4b2m <- simce_rbd %>%
+  filter(grado %in% c("4b", "2m"), agno %in% unique(santillana$agno))
+
+comparacion_simce <- simce_4b2m %>%
+  left_join(rbds_sant_por_grupo, by = c("agno", "grado", "rbd")) %>%
+  mutate(en_santillana = ifelse(is.na(en_santillana), "No presente en Santillana", "Presente en Santillana")) %>%
+  filter(!is.na(promedio_simce)) %>%
+  group_by(agno, grado_lbl, area_lbl, en_santillana) %>%
+  summarise(
+    promedio_simce_medio = mean(promedio_simce),
+    p25_promedio_simce = quantile(promedio_simce, probs = 0.25, na.rm = TRUE),
+    p75_promedio_simce = quantile(promedio_simce, probs = 0.75, na.rm = TRUE),
+    n_colegios           = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(agno, grado_lbl, area_lbl, desc(en_santillana))
+```
+
+```{r comparacion-simce-plot}
+p4 <- ggplot(
+  comparacion_simce,
+  aes(
+    x = factor(agno), y = promedio_simce_medio, 
+    color = en_santillana,
+    fill = en_santillana,
+    group = interaction(en_santillana, grado_lbl, area_lbl),
+    text = paste0(
+      "Año: ", agno, "<br>Grado: ", grado_lbl, "<br>Área: ", area_lbl,
+      "<br>", en_santillana, "<br>Promedio SIMCE: ", round(promedio_simce_medio, 1),
+      "<br>N° colegios: ", comma(n_colegios)
+    )
+  )
+) +
+  geom_point() + 
+  geom_line() +
+  ylim(0, NA) +
+  geom_ribbon(aes(ymin = p25_promedio_simce, ymax = p75_promedio_simce), alpha = .25, color = NA) +
+  facet_grid(area_lbl ~ grado_lbl) +
+  labs(
+    x = "Año", y = "Promedio SIMCE", fill = NULL, color = NULL,
+    title = "Promedio SIMCE según presencia del colegio en la base de ensayos Santillana"
+  ) +
+  theme_minimal()+
+  guides(fill = "none") +
+  theme(legend.position = "bottom") 
+
+ggplotly(p4, tooltip = "text") %>%
+  layout(legend = list(orientation = "h", y = -0.15))
+```
+
+*Nota:* los colegios que usan ensayos Santillana suelen tener, en promedio, puntajes SIMCE más altos que el resto — un patrón esperable de auto-selección (colegios que invierten en preparación adicional) y no necesariamente un efecto causal de los ensayos.
+
+## 2.2 Porcentaje de logro promedio en la base Santillana, por año, grado y área
+
+```{r logro-resumen}
+logro_resumen <- santillana %>%
+  filter(!is.na(porcentaje_logro)) %>%
+  group_by(agno, grado_lbl, area_lbl) %>%
+  summarise(
+    porcentaje_logro_medio    = mean(porcentaje_logro),
+    porcentaje_logro_mediana  = median(porcentaje_logro),
+    desviacion_estandar       = sd(porcentaje_logro),
+    n_evaluaciones            = n(),
+    n_alumnos                 = n_distinct(id_usuario_curso),
+    .groups = "drop"
+  ) %>%
+  arrange(agno, grado_lbl, area_lbl)
+
+# tabla_dt(logro_resumen, caption = "Porcentaje de logro promedio en la base Santillana, por año, grado y área")
+```
+
+```{r logro-plot}
+p5 <- ggplot(
+  logro_resumen,
+  aes(
+    x = factor(agno), y = porcentaje_logro_medio, color = area_lbl, group = area_lbl,
+    text = paste0(
+      "Año: ", agno, "<br>Área: ", area_lbl,
+      "<br>% logro promedio: ", round(porcentaje_logro_medio, 1),
+      "<br>N° alumnos: ", comma(n_alumnos)
+    )
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~grado_lbl) +
+  coord_cartesian(ylim = c(0, 100)) +
+  labs(
+    x = "Año", y = "% de logro promedio", color = "Área",
+    title = "Evolución del % de logro promedio en la base Santillana"
+  ) +
+  theme_minimal()
+
+ggplotly(p5, tooltip = "text")
+```
+
+### Detalle por colegio
+
+Tabla exploratoria con el % de logro promedio de cada colegio, para filtrar por año, grado o área y ordenar de mayor a menor logro.
+
+```{r logro-colegio-detalle}
+logro_colegio <- santillana %>%
+  filter(!is.na(porcentaje_logro), !is.na(rbd)) %>%
+  group_by(agno, grado_lbl, area_lbl, rbd, colegio) %>%
+  summarise(
+    porcentaje_logro_medio = mean(porcentaje_logro),
+    n_alumnos              = n_distinct(id_usuario_curso),
+    .groups = "drop"
+  ) %>%
+  arrange(agno, grado_lbl, area_lbl, desc(porcentaje_logro_medio))
+
+# tabla_dt(logro_colegio, caption = "% de logro promedio por colegio (base Santillana)", pageLength = 15)
+```
+
+## 2.3 Porcentaje de logro Santillana vs. promedio SIMCE oficial (correlación)
+
+Se calcula, por colegio-año-grado-área, el % de logro promedio en Santillana y se compara contra el promedio SIMCE oficial del mismo colegio-año-grado-área.
+
+```{r correlacion-prep}
+sant_colegio <- santillana %>%
+  filter(!is.na(rbd), !is.na(porcentaje_logro)) %>%
+  group_by(agno, grado, grado_lbl, area, area_lbl, rbd, colegio) %>%
+  summarise(
+    porcentaje_logro_medio = mean(porcentaje_logro),
+    n_ensayos = n(),
+    n_alumnos              = n_distinct(id_usuario_curso),
+    .groups = "drop"
+  )
+
+comparacion_colegio <- sant_colegio %>%
+  inner_join(
+    simce_rbd %>% select(agno, grado, area, rbd, promedio_simce, nom_rbd),
+    by = c("agno", "grado", "area", "rbd")
+  ) %>%
+  filter(!is.na(promedio_simce))
+
+n_sin_match <- nrow(sant_colegio) - nrow(comparacion_colegio)
+
+cor_resumen <- comparacion_colegio %>%
+  group_by(grado_lbl, area_lbl) %>%
+  summarise(
+    correlacion = cor(porcentaje_logro_medio, promedio_simce, use = "complete.obs"),
+    n_colegios  = n(),
+    .groups = "drop"
+  )
+
+cor_global <- cor(comparacion_colegio$porcentaje_logro_medio, comparacion_colegio$promedio_simce, use = "complete.obs")
+```
+
+`r n_sin_match` combinaciones colegio-año-grado-área de Santillana no tienen un registro SIMCE oficial correspondiente (colegio nuevo, curso sin rendición SIMCE, etc.) y quedan excluidas de esta sección.
+
+```{r correlacion-tabla}
+tabla_dt(
+  cor_resumen,
+  caption = paste0(
+    "Correlación entre % de logro (Santillana) y promedio SIMCE oficial, por grado y área. ",
+    "Correlación global (todas las combinaciones agrupadas): ", round(cor_global, 2)
+  )
+)
+```
+
+```{r correlacion-plot}
+anotaciones <- cor_resumen %>%
+  mutate(label = paste0("r = ", round(correlacion, 2)))
+
+p6 <- ggplot(
+  comparacion_colegio,
+  aes(
+    x = porcentaje_logro_medio, y = promedio_simce, color = factor(agno),
+    text = paste0(
+      "Colegio: ", colegio, "<br>Año: ", agno,
+      "<br>% logro Santillana: ", round(porcentaje_logro_medio, 1),
+      "<br>Promedio SIMCE: ", round(promedio_simce, 1),
+      "<br>N° alumnos: ", n_alumnos
+    )
+  )
+) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_smooth(method = "lm", se = FALSE, color = "grey30", linewidth = 0.6) +
+  facet_grid(area_lbl ~ grado_lbl) +
+  geom_text(
+    data = anotaciones, aes(x = -Inf, y = Inf, label = label),
+    inherit.aes = FALSE, hjust = -0.2, vjust = 1.5, size = 3.5, color = "grey20"
+  ) +
+  labs(
+    x = "% de logro promedio (Santillana)", y = "Promedio SIMCE oficial", color = "Año",
+    title = "Relación entre % de logro (Santillana) y promedio SIMCE oficial, por colegio"
+  ) +
+  theme_minimal()
+
+ggplotly(p6, tooltip = "text")
+```
+
+### Detalle colegio a colegio
+
+```{r correlacion-detalle}
+tabla_dt(
+  comparacion_colegio %>%
+    select(agno, grado_lbl, area_lbl, colegio, porcentaje_logro_medio, promedio_simce, n_ensayos) %>%
+    mutate(ratio = promedio_simce/porcentaje_logro_medio) %>% 
+    arrange(ratio),
+  caption = "Detalle por colegio: % de logro Santillana vs. promedio SIMCE oficial",
+  pageLength = 15
+)
+```
+
+```{r}
+comparacion_colegio %>% 
+      mutate(ratio = promedio_simce/porcentaje_logro_medio,
+             agno = factor(agno)) %>% 
+  ggplot(aes(x = ratio)) +
+  geom_density(alpha = .3) +
+  facet_wrap(grado_lbl ~ area_lbl)
+```
+
+---
+
+# Resumen
+
+- La base Santillana registra **`r comma(nrow(santillana))`** evaluaciones entre `r min(santillana$agno)` y `r max(santillana$agno)`, cubriendo **`r comma(n_distinct(santillana$rbd[!is.na(santillana$rbd)]))`** colegios distintos y **`r comma(n_distinct(santillana$id_usuario_curso))`** alumnos únicos en total.
+- La cobertura respecto a la matrícula evaluada en SIMCE en esos mismos colegios varía entre **`r round(min(cobertura$cobertura_pct, na.rm = TRUE), 1)`%** y **`r round(max(cobertura$cobertura_pct, na.rm = TRUE), 1)`%** según año y grado.
+- Los colegios presentes en la base Santillana tienden a mostrar promedios SIMCE más altos que los colegios ausentes, de forma consistente en casi todas las combinaciones de año, grado y área.
+- El % de logro promedio en los ensayos Santillana y el promedio SIMCE oficial del mismo colegio están moderada a fuertemente correlacionados (r global = **`r round(cor_global, 2)`**; entre **`r round(min(cor_resumen$correlacion), 2)`** y **`r round(max(cor_resumen$correlacion), 2)`** al desagregar por grado y área), lo que sugiere que el desempeño en los ensayos es un buen predictor del desempeño SIMCE oficial a nivel de colegio.

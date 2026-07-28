@@ -58,7 +58,7 @@ dir_salidas %>% dir.create(showWarnings = FALSE)
 # Cargar datos ----
 ## ENSAYOS ----
 ensayos_santillana0 <- ruta_data_intermedia %>% 
-  file.path('ensayo_simce', 'ensayos_santillana_corregido.parquet') %>% 
+  file.path('ensayo_santillana', 'ensayos_santillana_corregido.parquet') %>% 
   read_parquet() 
 
 ensayos <- ensayos_santillana0 %>% 
@@ -84,7 +84,6 @@ ensayos_limpio <- ensayos %>%
     # puntaje extra/errores de origen); se acota a 100.
     porcentaje_logro = pmin(porcentaje_logro, 100)
   ) %>%
-  rename(grado = nivel) %>%
   filter(!is.na(rbd_revisado), !is.na(ensayo_num))
 
 # Un mismo estudiante puede tener 2 registros para el mismo número de
