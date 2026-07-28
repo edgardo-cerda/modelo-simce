@@ -7,7 +7,7 @@ library(arrow)
 library(stringi)
 library(stringdist)
 library(writexl)
-library(httr2)
+library(httr)
 
 UMBRAL_ACEPTACION <- 90   # % de similitud mínimo para aceptar un match por nombre
 UMBRAL_COMUNA     <- 85   # % de similitud mínimo para aceptar que dos comunas son la misma
