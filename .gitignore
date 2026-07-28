@@ -64,3 +64,5 @@ outputs/
 *.js
 *.css
 *.map
+
+*_files

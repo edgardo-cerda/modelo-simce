@@ -1,0 +1,587 @@
+---
+title: "Predicción de resultados SIMCE"
+subtitle: "Modelo de estimación de resultados SIMCE - Santillana"
+author: "Cerda, Edgardo; Olivares, Abel"
+date: today
+lang: es
+format:
+  revealjs:
+    theme: [default, tema_simce.scss]
+    slide-number: c/t
+    # Las secciones de nivel 1 crean pilas verticales; en modo lineal las
+    # flechas recorren TODAS las láminas en orden, sin saltarse ninguna.
+    navigation-mode: linear
+    transition: fade
+    transition-speed: fast
+    footer: "Modelo de predicción SIMCE"
+    title-slide-attributes:
+      data-background-color: "#10303B"
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup}
+#| include: false
+library(tidyverse)
+library(htmltools)
+
+# Las tablas y gráficos NO se calculan acá: los genera
+# 05_figuras_presentacion.R y llegan listos en un único .rds. Si ese
+# archivo todavía no existe, la presentación igual renderiza y en cada
+# lugar aparece la propuesta de qué tabla o gráfico va ahí.
+ruta_figuras <- tryCatch({
+  usuario <- Sys.info()[["user"]]
+  rutas   <- config::get(config = usuario, file = "config.yml")
+  file.path(rutas$ruta_outputs, "modelo_lme_alu", "figuras_presentacion.rds")
+}, error = function(e) "figuras_presentacion.rds")
+
+figuras <- if (file.exists(ruta_figuras)) readRDS(ruta_figuras) else NULL
+if (!is.null(figuras) && length(figuras$graficos)) library(plotly)
+
+# Marco "pendiente": describe qué figura va en ese lugar.
+pendiente <- function(tipo, texto, fuente) {
+  div(class = "fig-pendiente",
+      tags$p(span(class = "fig-tag", tipo)),
+      tags$p(texto),
+      span(class = "fig-fuente", fuente))
+}
+
+mostrar_tabla <- function(nombre, texto, fuente) {
+  t <- figuras$tablas[[nombre]]
+  if (is.null(t)) return(pendiente("Tabla propuesta", texto, fuente))
+  HTML(knitr::kable(t, format = "html", align = "l", escape = FALSE))
+}
+
+mostrar_grafico <- function(nombre, texto, fuente) {
+  g <- figuras$graficos[[nombre]]
+  if (is.null(g)) g <- figuras$graficos_estaticos[[nombre]]
+  if (is.null(g)) return(pendiente("Gráfico propuesto", texto, fuente))
+  g
+}
+```
+
+# Introducción {.seccion background-color="#10303B"}
+
+[SECCIÓN 1 · EL PROBLEMA]{.eyebrow}
+
+## El problema
+
+[Qué queremos predecir]{.eyebrow}
+
+**Objetivo:** Saber cómo le irá a cada colegio y a cada estudiante en las próximas ronda de pruebas SIMCE, antes de que la rindan.
+
+
+**Esto nos sirve para:**
+
+- Anticipar el resultado del colegio antes de la medición oficial.
+- Ver cómo se distribuiría el curso: ¿cuántos estudiantes en cada nivel de logro?
+- Identificar a los estudiantes en la cola de riesgo.
+- Priorizar apoyos durante el año, cuando todavía hay tiempo de actuar.
+
+
+## ¿Con qué contamos para hacer la predicción?
+
+[Con qué datos contamos]{.eyebrow}
+
+Para esto contamos con:
+
+- **Ensayos Santillana**: Ensayos que los estudiantes rinden durante el año (1 a 6 ensayos por estudiante, 4° básico y 2° medio, matemática y lectura).
+
+- **Información pública del colegio**: 
+  - Resultados SIMCE históricos
+  - Características del colegio en años previos: grupo socioeconómico (GSE), dependencia administrativa, ruralidad
+
+  
+## Por qué el problema es difícil
+
+[Cinco obstáculos]{.eyebrow}
+
+- El ensayo y el SIMCE son **instrumentos distintos**, en escalas distintas, y cambiantes en el tiempo.
+- Lo que se observa es **señal más ruido**. Un estudiante puede tener un mal día, apurarse al final, adivinar; y cada ensayo tiene su propia dificultad.
+- El SIMCE **no publica identificadores individuales**, por lo que no es posible saber cómo el fue en el SIMCE a cada estudiante.
+- Los estudiantes de un mismo colegio son **muy distintos entre sí**: predecirle a todos el promedio del colegio ignora la parte más informativa del resultado.
+- La predicción debería funcionar también en colegios **nuevos o con poca historia**.
+
+## Por qué no basta una regla de conversión
+
+[La alternativa simple, y qué deja fuera]{.eyebrow}
+
+- Una fórmula lineal trata el logro observado como si fuera exacto, así que se **traslada todo el ruido al puntaje predicho** y exagera los extremos. Al estudiante que sacó mucho por suerte le proyecta un puntaje alto.
+- **La equivalencia no es constante.** Cambia por grado, área y año.
+- **El ensayo no es lo único que informa.** La historia y el contexto del colegio también mueven el resultado.
+
+
+# Datos {.seccion background-color="#10303B"}
+
+[SECCIÓN 2 · CON QUÉ CONTAMOS]{.eyebrow}
+
+## Fuentes de datos
+
+[Cuatro insumos, cuatro roles]{.eyebrow}
+
+| Archivo | Qué es | Rol en el modelo |
+|---|---|---|
+| Ensayos Santillana | Pruebas de práctica que los colegios aplican durante el año, en el mismo formato del SIMCE. Cada estudiante rinde entre 1 y 6, en lenguaje y matemática | Predictores |
+| SIMCE por colegio (RBD) | Resultado oficial publicado por la Agencia de Calidad: el promedio que obtuvo cada colegio en cada medición | Target del **nivel** |
+| SIMCE por alumno | El puntaje que obtuvo cada estudiante que rindió la prueba, con el error de medición del instrumento | Target de la **dispersión**, forma de la distribución y verdad para validar |
+| Contexto del colegio | Caracterización del establecimiento que publica la Agencia junto con los resultados: nivel socioeconómico de las familias, quién administra el colegio y si es urbano o rural | Prior para colegios con poca historia |
+
+## Resultados SIMCE
+
+[Cuánto hay, año a año]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_simce_anio",
+  "Número de colegios y de alumnos distintos con puntaje SIMCE en cada año.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Cómo se distribuyen los puntajes
+
+[Escala y ancho del SIMCE]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_densidad_simce",
+  "Densidad de los puntajes SIMCE individuales por grado y área: la escala de la variable y cuánta variación hay que reproducir.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Dentro de un colegio también hay mucha variación
+
+[Un colegio concreto, y la descomposición del total]{.eyebrow}
+
+::::: {.columns}
+:::: {.column width="58%"}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_colegio_ejemplo",
+  "Distribución de puntajes de un colegio con muchos alumnos (barras) contra la distribución nacional del mismo grado y área (línea): la distancia entre las medias es variación entre colegios; el ancho de las barras, variación dentro del colegio.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+::::
+:::: {.column width="42%"}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_varianza",
+  "Descomposición de la varianza total de los puntajes SIMCE en su componente entre colegios y dentro del colegio.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+::::
+:::::
+
+## Ensayos Santillana
+
+[Cuánto hay, año a año]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_ensayos_anio",
+  "Número de colegios, de alumnos distintos y de ensayos rendidos por año, con el promedio de ensayos que rinde cada alumno en cada área.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Cómo se distribuye el logro en los ensayos
+
+[La otra variable, en su propia escala]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_densidad_logro",
+  "Densidad del logro promedio de cada estudiante en los ensayos, por grado y área.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## El logro avanza durante el año
+
+[Logro medio según número de evaluación]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_logro_por_evaluacion",
+  "Logro medio en cada ensayo sucesivo del año, por año, grado y área: la progresión que recoge la pendiente del modelo de crecimiento.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Del ensayo al SIMCE
+
+[La relación de partida]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_ensayo_vs_simce",
+  "SIMCE promedio del colegio vs. logro medio en los ensayos, con línea de tendencia por grado y área.",
+  "01_preparar_datos.R -> school_model_data.rds")
+```
+
+## Las dos fuentes se mueven juntas
+
+[Cada serie estandarizada, para tener escala común]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_evolucion_estandarizada",
+  "Evolución del SIMCE y del logro en los ensayos por año, grado y área, cada serie estandarizada dentro de su grupo para poder compararlas.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Otros factores: el contexto del colegio
+
+[SIMCE promedio según grupo socioeconómico]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_simce_por_gse",
+  "SIMCE promedio del colegio según grupo socioeconómico, por grado y área, en el universo nacional.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Sobre qué población vale el modelo
+
+[Composición de la base con ensayo vs. el país]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_composicion_gse",
+  "Distribución de colegios por grupo socioeconómico: los que tienen ensayo vs. el universo nacional. Muestra sobre qué población valen los coeficientes del modelo.",
+  "01_preparar_datos.R -> descriptivos.rds")
+```
+
+## Cobertura y consistencia de las fuentes
+
+[Verificaciones previas]{.eyebrow}
+
+- El archivo por alumno **reproduce los promedios oficiales por colegio** (diferencia mediana ~0,3 puntos; correlación 0,99): es el mismo universo, desagregado.
+- Los ensayos cubren **prácticamente el curso completo** (107–112% de quienes rinden SIMCE): no son una submuestra de "los que se preparan", lo que legitima comparar posiciones relativas entre ambas fuentes.
+- Se exige un mínimo de **15 alumnos** para usar la dispersión interna de un colegio: con menos, la desviación estándar muestral es demasiado ruidosa.
+
+
+## Oportunidades y desafíos
+
+[Lo que los datos permiten — y lo que imponen]{.eyebrow}
+
+::::: {.columns}
+:::: {.column width="50%"}
+::: {.tarjeta .t-ok}
+[Oportunidades]{.tarjeta-titulo}
+
+- **SIMCE por alumno** → modelar cuán distintos son los estudiantes de un mismo colegio, y validar contra distribuciones reales.
+- **Forma empírica** de la distribución interna: miles de colegios observados, sin asumir normalidad.
+- **Universo nacional de contexto**: estimar el efecto de GSE, dependencia y ruralidad donde sí hay variación, y transferirlo.
+:::
+::::
+:::: {.column width="50%"}
+::: {.tarjeta .t-alerta}
+[Desafíos]{.tarjeta-titulo}
+
+- **Sin vínculo alumno-a-alumno** entre ensayo y SIMCE: no se puede entrenar ni validar predicción por predicción.
+- Base de colegios con ensayo **no representativa** (57–63% particular pagado, GSE alto, 1–4% rural).
+- El **contexto cambia** (~26% de los colegios cambia de GSE de un año a otro) y se publica junto al resultado → usar siempre **rezagado**.
+- Grupos chicos (~150–220 colegios por grado × área): cada grado de libertad cuenta.
+:::
+::::
+:::::
+
+# El modelo {.seccion background-color="#10303B"}
+
+[SECCIÓN 3 · CÓMO LO ABORDAMOS]{.eyebrow}
+
+## La estructura general
+
+[Tres piezas, cada una estimada donde hay evidencia]{.eyebrow}
+
+:::: {.tres-piezas}
+::: {.pieza .p-media}
+[MEDIA]{.pieza-titulo}
+[modelo de nivel]{.pieza-sub}
+El promedio esperado del colegio. Se valida contra el **SIMCE oficial** publicado.
+:::
+
+[+]{.operador}
+
+::: {.pieza .p-ancho}
+[ANCHO]{.pieza-titulo}
+[modelo de dispersión]{.pieza-sub}
+Cuán distintos son los estudiantes entre sí. Se valida contra la **sd real** entre alumnos.
+:::
+
+[×]{.operador}
+
+::: {.pieza .p-pos}
+[POSICIÓN]{.pieza-titulo}
+[percentil en los ensayos]{.pieza-sub}
+El lugar del estudiante **dentro de su propio colegio**, la única fuente individual disponible.
+:::
+::::
+
+$$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{colegio}} \cdot Q(\text{percentil}_i)$$
+
+## Features a nivel de estudiante
+
+[La materia prima individual]{.eyebrow}
+
+Por año × grado × área:
+
+- `mean_logro`: promedio de logro en los ensayos del año.
+- `pred_final_logro` y `slope_logro`: nivel proyectado y pendiente de mejora, de un **modelo mixto de crecimiento** que estabiliza a quienes rinden pocos ensayos.
+- `n_evals`: cuántos ensayos rindió.
+- `pct_ensayo`: **percentil del estudiante dentro de su propio colegio** — la pieza que alimenta la predicción individual.
+
+El índice de ordenamiento ya viene *encogido* por el modelo mixto: un estudiante con un solo ensayo queda cerca del promedio de su colegio en vez de irse a un extremo por ruido.
+
+## Features a nivel de colegio
+
+[Nivel, historia y contexto]{.eyebrow}
+
+- Variables de ensayo agregadas, más features de **dispersión**: heterogeneidad de los ensayos este año (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad histórica (`sd_hist_colegio`).
+- `colegio_efecto_historico`: nivel persistente del colegio, estimado sobre el **universo nacional** de años anteriores:
+
+```
+promedio_simce ~ año + GSE + dependencia + ruralidad + (1 | colegio)
+colegio_efecto_historico = expectativa_contextual + desvío_propio
+```
+
+- Un colegio **sin historia** recibe lo esperado para su contexto; uno con **historia larga** queda dominado por su propia evidencia.
+- Todo lo histórico usa **ventana expansiva**: solo años anteriores al que se predice.
+
+## Modelo de nivel — la media del colegio
+
+[Pieza 1 de 3]{.eyebrow}
+
+Una regresión lineal por grado × área:
+
+```
+promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
+                 n_evals_prom + colegio_efecto_historico
+```
+
+- Validación **out-of-time**: se entrena excluyendo el año más reciente y se evalúa contra él.
+- Se compara contra un baseline simple (el promedio histórico del grupo).
+
+## Modelo de dispersión — el ancho del colegio
+
+[Pieza 2 de 3]{.eyebrow}
+
+Una regresión por grado × área, con la **desviación estándar interna** como target:
+
+```
+sd_simce ~ sd_entre_estud + iqr_logro_ensayo + sd_hist_colegio +
+           mean_logro + colegio_efecto_historico
+```
+
+- **Ponderada por número de alumnos**: la sd de un colegio de 20 alumnos es mucho más ruidosa que la de uno de 200.
+- La heterogeneidad histórica es el predictor más informativo (es persistente); los ensayos del año aportan la señal fresca; el nivel entra por el efecto piso/techo de la prueba.
+- Predicción acotada al rango observado en entrenamiento; respaldos en cascada para colegios sin modelo o sin historia.
+
+## Predicción individual — matching por percentil
+
+[Pieza 3 de 3]{.eyebrow}
+
+$$\text{pred}_i = \hat{\mu}_{\text{colegio}} + \hat{\sigma}_{\text{colegio}} \cdot Q(\text{pct}_i)$$
+
+- $Q$ es la **forma empírica** de la distribución interna, calculada sobre miles de colegios reales: se estandariza dentro de cada colegio y se guarda la función de cuantiles, por grado, área y **tercil de nivel** (los colegios de bajo nivel tienen la cola derecha algo más larga, y viceversa).
+- A cada estudiante se le asigna el puntaje que corresponde a **su percentil** dentro de la distribución predicha de su colegio.
+- Por construcción, el conjunto de predicciones de un colegio **reproduce la distribución completa** que debería tener: media, ancho, forma y colas.
+
+## La forma que reemplaza a la normal
+
+[Plantilla empírica de la distribución interna]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_forma_z",
+  "Función de cuantiles del puntaje estandarizado dentro del colegio, por tercil de nivel, comparada con la normal: los colegios de nivel bajo tienen la cola derecha más larga y los de nivel alto, la izquierda.",
+  "01_preparar_datos.R -> forma_z.rds")
+```
+
+## ¿Qué preguntas responde?
+
+[El modelo, leído desde el usuario]{.eyebrow}
+
+Es la versión apropiada para preguntas **sobre el grupo**:
+
+- "¿Cómo se va a ver la distribución de mi curso?"
+- "¿Cuántos estudiantes quedarían en nivel insuficiente?"
+- "¿Quiénes están en la cola de riesgo?"
+
+Supuesto explícito: el **ranking** de los ensayos dentro del colegio se parece al ranking en el SIMCE. Por eso cada predicción individual debe leerse como una **posición esperada dentro del curso**, no como un puntaje garantizado.
+
+# Resultados {.seccion background-color="#10303B"}
+
+[SECCIÓN 4 · QUÉ TAN BIEN FUNCIONA]{.eyebrow}
+
+## Validación del modelo de nivel
+
+[Out-of-time, contra el año más reciente]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_nivel",
+  "MAE del modelo vs. el baseline del promedio histórico, mejora, R² en el año de prueba, y el MAE separado para colegios con y sin historia previa.",
+  "02_modelo_escolar.R -> metricas_validacion.csv")
+```
+
+## Nivel: observado vs. predicho
+
+[Colegio por colegio, año de prueba]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_obs_pred_nivel",
+  "SIMCE observado vs. predicho por colegio en el año de prueba, con diagonal de referencia.",
+  "02_modelo_escolar.R -> diag_nivel.rds")
+```
+
+## Validación del modelo de dispersión
+
+[¿Acertamos el ancho?]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_dispersion",
+  "MAE del modelo de dispersión vs. dos baselines (misma sd para todos, y la sd histórica del propio colegio), R², y el error como porcentaje del ancho estimado.",
+  "02b_modelo_dispersion.R -> metricas_dispersion.csv")
+```
+
+## Dispersión: observada vs. predicha
+
+[Colegio por colegio, año de prueba]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_obs_pred_sd",
+  "Desviación estándar interna observada vs. predicha por colegio, con diagonal de referencia.",
+  "02b_modelo_dispersion.R -> diag_dispersion.rds")
+```
+
+**Cómo dimensionar el error:** reportarlo como porcentaje del ancho típico que se estima (la sd interna suele estar entre ~40 y ~55 puntos).
+
+## Validación de la predicción individual
+
+[Validación distribucional]{.eyebrow}
+
+Sin vínculo alumno-a-alumno, la pregunta es: ¿el **conjunto** de predicciones de un colegio reproduce el conjunto de puntajes que ese colegio efectivamente obtuvo?
+
+**Métrica principal — error de cuantiles:** se comparan los percentiles 5, 10, …, 95 de las predicciones contra los observados en cada colegio y se promedia el error absoluto (distancia de Wasserstein-1 discretizada). Captura errores de nivel, ancho y forma en un solo número.
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_distribucional",
+  "Error de cuantiles del modelo, del baseline 'solo la media', y del mismo reparto con la media y la sd observadas del colegio: esa columna separa el error del modelo de colegio del error del paso a individuo.",
+  "04_validacion_individual.R -> validacion_distribucional.csv")
+```
+
+## Validación de la predicción individual (cont.)
+
+[Ver la distribución completa]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_densidad_validacion",
+  "Densidad de los puntajes individuales predichos vs. observados, agrupando todos los colegios validados.",
+  "04_validacion_individual.R -> dens_validacion.rds")
+```
+
+## Cómo se reparte el error entre colegios
+
+[No todos los colegios se predicen igual de bien]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_error_por_colegio",
+  "Distribución del error de cuantiles entre colegios: dónde está el grueso y cuán larga es la cola de colegios mal predichos.",
+  "04_validacion_individual.R -> validacion_por_colegio.rds")
+```
+
+## Equidad del modelo entre estratos
+
+[¿Funciona parejo, o solo donde hay más datos?]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_estrato",
+  "Error de cuantiles y error absoluto de la media por estrato GSE, con el número de colegios de cada estrato.",
+  "04_validacion_individual.R -> validacion_por_estrato.csv")
+```
+
+## Chequeos de coherencia interna
+
+[Verificaciones automáticas en cada corrida]{.eyebrow}
+
+- El **promedio** de las predicciones individuales de un colegio reproduce la predicción de nivel del colegio.
+- La **desviación estándar** de las predicciones individuales reproduce el ancho predicho (razón ≈ 1).
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_coherencia",
+  "Diferencia entre el promedio de las predicciones individuales y la predicción de nivel del colegio, y razón entre la sd de las predicciones y el ancho predicho.",
+  "03_prediccion_nueva_ronda.R -> chequeo_coherencia.csv")
+```
+
+# Limitaciones {.seccion background-color="#10303B"}
+
+[SECCIÓN 5 · QUÉ HAY QUE TENER PRESENTE]{.eyebrow}
+
+## Limitaciones de fondo {.limitaciones}
+
+[Los dos límites estructurales]{.eyebrow}
+
+- **No hay vínculo alumno-a-alumno** entre el ensayo y el SIMCE. Impide validar predicción por predicción y obliga a apoyarse en el supuesto de que el ranking del ensayo se parece al del SIMCE. Conseguir un cruce, aunque sea parcial y anonimizado, es lo que más valor agregaría.
+- **La base de colegios con ensayo no es representativa del país** (mayoritariamente particular pagado, GSE alto, casi sin ruralidad). Los coeficientes valen para esa población; extender el modelo a otros contextos exige revisar el ajuste, no asumir que transfiere. La validación por estrato existe justamente para vigilar esto.
+
+## Limitaciones de diseño {.limitaciones}
+
+[Supuestos y simplificaciones]{.eyebrow}
+
+- **La predicción individual asume ranking perfecto** entre ensayo y SIMCE: cada puntaje es una posición esperada dentro del curso, menos precisa de lo que sugiere su apariencia de número exacto.
+- **La forma de la distribución es una plantilla nacional**, no la del propio colegio. Con más años acumulados podría usarse la forma histórica de cada colegio.
+- **La pendiente de mejora se estima por colegio, no por estudiante** (muchos rinden un solo ensayo).
+- **El error remanente está sobre todo en el modelo de colegio** (media y ancho), no en el reparto hacia los estudiantes: ahí conviene invertir la próxima iteración.
+
+## Qué no prometer {.limitaciones}
+
+[Compromisos de comunicación]{.eyebrow}
+
+- **Nunca** presentar las predicciones como equivalentes a un puntaje SIMCE oficial: el SIMCE no reporta puntajes individuales, y estas son estimaciones basadas en otro instrumento.
+- Los reportes a estudiantes o apoderados deben comunicar **incertidumbre**, no números secos.
+- Los reportes a equipos directivos deben enfocarse en la **distribución del curso** (niveles de logro, colas de riesgo), que es exactamente lo que el modelo está diseñado y validado para reproducir.
+
+## Síntesis {background-color="#10303B" .cierre}
+
+[EN UNA DIAPOSITIVA]{.eyebrow}
+
+::: {style="color: #F7F6F1; font-size: 0.9em;"}
+- Un modelo por capas — **media + ancho + posición** — donde cada pieza se estima y valida con la evidencia que sí existe.
+- La información pública del colegio entra como **prior contextual**, y es clave donde falta historia.
+- La predicción individual por **matching de percentil** reproduce la distribución completa del curso: la pregunta que un colegio realmente necesita responder.
+:::
+
+[Gracias.]{.gracias}

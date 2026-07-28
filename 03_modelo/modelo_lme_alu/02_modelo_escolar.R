@@ -27,7 +27,7 @@ library(broom)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
 
 school_model_data <- dir_salidas %>% file.path('school_model_data.rds') %>% readRDS()
 
@@ -134,12 +134,21 @@ cat("Resumen de validación (todos los grupos):\n")
 print(tabla_resultados)
 
 # ---- Gráfico de diagnóstico: observado vs. predicho en el año de prueba ----
+# Se guardan también el rbd y el contexto de cada colegio: 05 los usa
+# para los tooltips del gráfico interactivo de la presentación (poder
+# pasar el mouse sobre un punto y ver de qué colegio se trata es lo que
+# hace útil ese gráfico en una reunión).
 diag_plot_data <- map_dfr(names(modelos), function(clave) {
   partes <- str_split(clave, "_", n = 2)[[1]]
   g <- partes[1]; a <- partes[2]
   datos_grupo <- school_model_data %>% filter(grado == g, area == a, agno == anio_test)
   tibble(
     grado = g, area = a,
+    rbd_revisado  = datos_grupo$rbd_revisado,
+    gse_etiqueta  = datos_grupo$gse_etiqueta,
+    depe2_etiqueta = datos_grupo$depe2_etiqueta,
+    n_anios_hist  = datos_grupo$n_anios_hist,
+    n_estudiantes = datos_grupo$n_estudiantes,
     observado = datos_grupo$promedio_simce,
     predicho  = predict(modelos[[clave]], newdata = datos_grupo)
   )
@@ -168,6 +177,7 @@ print(
 
 # ---- Guardar modelos y métricas ----------------------------------------
 saveRDS(modelos, dir_salidas %>% file.path("modelos_escolares.rds"))
+saveRDS(diag_plot_data, dir_salidas %>% file.path("diag_nivel.rds"))  # lo usa 05
 saveRDS(anio_test, dir_salidas %>% file.path("anio_test.rds"))  # lo reusa 04
 write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv"))
 

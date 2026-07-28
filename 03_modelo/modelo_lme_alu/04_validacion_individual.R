@@ -49,7 +49,7 @@ library(tidyverse)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
 
 MIN_ALU_VALID <- 15
 QS <- seq(0.05, 0.95, by = 0.05)
@@ -113,6 +113,30 @@ comp <- pred_q %>%
     error_media     = pred_colegio - media_obs
   )
 
+# ---- 1b. Oráculo: la misma versión B pero con la media y la sd
+# OBSERVADAS del colegio. No es una predicción (usa información que no
+# existe al momento de predecir): sirve para separar cuánto del error
+# viene de predecir el colegio y cuánto de repartir hacia los estudiantes.
+# Si esta columna da un error mucho más bajo, el problema está en el
+# modelo de colegio, no en la plantilla de forma.
+if ("z_forma" %in% names(pred_individual)) {
+
+  q_oraculo <- pred_individual %>%
+    inner_join(obs_q %>% select(grado, area, rbd_revisado, media_obs, sd_obs),
+               by = c("grado", "area", "rbd_revisado")) %>%
+    mutate(pred_B_oraculo = media_obs + sd_obs * z_forma) %>%
+    group_by(grado, area, rbd_revisado) %>%
+    summarise(q_oraculo = cuantiles(pred_B_oraculo), .groups = "drop")
+
+  comp <- comp %>%
+    left_join(q_oraculo, by = c("grado", "area", "rbd_revisado")) %>%
+    mutate(qmae_B_oraculo = map2_dbl(q_oraculo, q_obs,
+                                     ~ if (is.null(.x)) NA_real_ else mean(abs(.x - .y))))
+} else {
+  warning("pred_individual no trae z_forma: no se puede calcular el oráculo.")
+  comp$qmae_B_oraculo <- NA_real_
+}
+
 cat("\nColegios validados:", nrow(comp), "\n\n")
 
 resumen_dist <- comp %>%
@@ -123,6 +147,7 @@ resumen_dist <- comp %>%
     qmae_A           = mean(qmae_A),
     qmae_v2_legado   = mean(qmae_v2),
     qmae_solo_media  = mean(qmae_solo_media),
+    qmae_B_oraculo   = mean(qmae_B_oraculo, na.rm = TRUE),
     sd_observada     = mean(sd_obs),
     sd_predicha      = mean(sd_predicha),
     sd_efectiva_B    = mean(sd_B),
@@ -271,7 +296,27 @@ p2 <- comp %>%
 ggsave(dir_salidas %>% file.path("validacion_dispersion_individual.png"),
        p2, width = 10, height = 7)
 
+# ---- 4b. Densidades resumidas para la presentación (NUEVO) -----------
+# El gráfico de distribución predicha vs. observada se arma acá y no en
+# 05 porque `emparejado` y `obs` tienen millones de filas. Se guarda la
+# curva ya evaluada en una grilla de 256 puntos por serie: unas pocas
+# miles de filas en total.
+dens_validacion <- dens_data %>%
+  filter(fuente %in% c("Observado", "Versión B (percentil)")) %>%
+  mutate(fuente = recode(fuente,
+                         "Versión B (percentil)" = "Predicción (versión B)")) %>%
+  filter(!is.na(valor)) %>%
+  group_by(grado, area, fuente) %>%
+  group_modify(~ {
+    d <- density(.x$valor, n = 256)
+    tibble(x = d$x, y = d$y)
+  }) %>%
+  ungroup()
+
 # ---- 5. Guardar ------------------------------------------------------
+saveRDS(dens_validacion, dir_salidas %>% file.path("dens_validacion.rds"))   # lo usa 05
+saveRDS(comp %>% select(-starts_with("q_")),
+        dir_salidas %>% file.path("validacion_por_colegio.rds"))             # lo usa 05
 write_csv(comp %>% select(-starts_with("q_")),
           dir_salidas %>% file.path("validacion_por_colegio.csv"))
 write_csv(resumen_dist, dir_salidas %>% file.path("validacion_distribucional.csv"))

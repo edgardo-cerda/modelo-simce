@@ -1,0 +1,419 @@
+/*-- scss:defaults --*/
+
+// ============================================================
+// TEMA "PIZARRA Y DISTRIBUCIÓN" — presentación modelo SIMCE
+// Paleta:
+//   tinta    #10303B  petróleo profundo (texto, fondos de sección)
+//   papel    #F7F6F1  blanco papel (fondo de contenido)
+//   marigold #E9A13B  destacador (acento principal)
+//   lago     #1F7A8C  azul lago (acento secundario, links)
+//   coral    #C95D5D  advertencias / limitaciones
+//   bruma    #D9E0E0  bordes y líneas suaves
+// ============================================================
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@300;400;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+$tinta:    #10303B;
+$tinta-70: #3D5A64;
+$papel:    #F7F6F1;
+$marigold: #E9A13B;
+$lago:     #1F7A8C;
+$coral:    #C95D5D;
+$bruma:    #D9E0E0;
+$blanco:   #FDFDFB;
+
+$body-bg: $papel;
+$body-color: $tinta;
+$link-color: $lago;
+$selection-bg: rgba($marigold, .35);
+
+$font-family-sans-serif: "Public Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+$font-family-monospace: "IBM Plex Mono", ui-monospace, "Courier New", monospace;
+$presentation-heading-font: "Fraunces", Georgia, "Times New Roman", serif;
+$presentation-heading-color: $tinta;
+$presentation-font-size-root: 30px;
+$presentation-h1-font-size: 2.2em;
+$presentation-h2-font-size: 1.35em;
+$code-block-bg: #EDF1EC;
+$code-block-border-color: transparent;
+$code-color: $tinta;
+
+/*-- scss:rules --*/
+
+// ---------- utilidades tipográficas ----------
+.reveal {
+  letter-spacing: .01em;
+
+  h1, h2, h3 { font-weight: 600; }
+
+  h2 {
+    border-bottom: none;
+    padding-bottom: .45em;
+    margin-bottom: .55em;
+    position: relative;
+  }
+  // subrayado corto tipo "trazo de destacador" bajo cada título
+  h2::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 2.2em; height: .16em;
+    background: $marigold;
+    border-radius: 2px;
+  }
+
+  strong { color: #196473; font-weight: 700; }
+  a { text-decoration: none; border-bottom: 2px solid rgba($lago,.35); }
+
+  .slide-number { color: $tinta-70; }
+  .progress { color: $marigold; height: 4px; }
+}
+
+// etiqueta "eyebrow" sobre los títulos (SECCIÓN 2 · DATOS, etc.)
+.reveal .eyebrow {
+  display: inline-block;
+  font-family: $font-family-monospace;
+  font-size: .5em;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: $lago;
+  border: 1.5px solid rgba($lago, .45);
+  border-radius: 999px;
+  padding: .25em .9em;
+  margin-bottom: .5em;
+}
+
+// ---------- firma visual: dos curvas de densidad ----------
+// SVG apaisado (1200x260). Se pinta SIEMPRE sobre una caja del alto
+// completo de la diapositiva, con background-size: 100% auto y anclado
+// abajo: así conserva su proporción y nunca se recorta ni se amplía.
+$curvas: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 260'%3E%3Cpath d='M0,246 C210,240 310,218 410,160 C490,112 530,50 610,50 C690,50 730,112 810,160 C910,218 1010,240 1200,246' fill='none' stroke='%23E9A13B' stroke-width='4' opacity='0.8'/%3E%3Cpath d='M0,248 C230,242 350,216 460,166 C540,124 580,72 655,72 C730,72 770,124 850,166 C960,216 1060,242 1200,248' fill='none' stroke='%23F7F6F1' stroke-width='3' stroke-dasharray='2 12' stroke-linecap='round' opacity='0.55'/%3E%3C/svg%3E");
+
+@mixin firma-curvas {
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image: $curvas;
+    background-repeat: no-repeat;
+    background-position: center bottom;
+    background-size: 100% auto;
+  }
+  // el contenido siempre por encima de la decoración
+  > * { position: relative; z-index: 1; }
+}
+
+// ---------- portada ----------
+#title-slide {
+  text-align: left;
+  @include firma-curvas;
+
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: 24%;
+
+  h1.title {
+    color: $blanco;
+    font-size: 2.6em;
+    font-weight: 700;
+    line-height: 1.08;
+    margin-bottom: .25em;
+  }
+  p.subtitle {
+    color: rgba($blanco, .85);
+    font-family: $font-family-sans-serif;
+    font-weight: 300;
+    font-size: 1.05em;
+    max-width: 26em;
+    border-left: 4px solid $marigold;
+    padding-left: .8em;
+    margin-top: .8em;
+  }
+  .quarto-title-authors, p.date {
+    color: rgba($blanco, .6);
+    font-family: $font-family-monospace;
+    font-size: .6em;
+    letter-spacing: .08em;
+  }
+  .quarto-title-authors { justify-content: flex-start; margin-top: 1.4em; }
+}
+
+// ---------- diapositivas de sección (fondo tinta) ----------
+// La franja de curvas ocupa el ~32% inferior (el SVG es 1200x260 y se
+// dibuja al 100% del ancho), así que el contenido se centra en el resto
+// con un padding-bottom que le deja esa zona libre.
+.reveal .seccion {
+  @include firma-curvas;
+
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: 26%;
+
+  h1 {
+    color: $blanco;
+    font-size: 2.4em;
+    font-weight: 700;
+    text-align: left;
+    margin: 0 0 .45em 0;
+  }
+  .eyebrow { color: $marigold; border-color: rgba($marigold,.55); }
+  p { margin: 0; }
+}
+
+// ---------- placeholders de figuras y tablas ----------
+// se ven como un "marco de gráfico" en espera: ejes dibujados + trama
+.reveal .fig-pendiente {
+  position: relative;
+  margin: .6em 0;
+  padding: .9em 1.1em .9em 3.2em;
+  background:
+    repeating-linear-gradient(-45deg,
+      rgba($tinta, .028) 0 10px, transparent 10px 22px),
+    $blanco;
+  border: 2px dashed rgba($tinta, .35);
+  border-radius: 10px;
+  font-size: .72em;
+  line-height: 1.45;
+  color: $tinta-70;
+
+  // mini ejes de gráfico en la esquina izquierda
+  &::before {
+    content: "";
+    position: absolute;
+    left: 1em; top: 1.05em;
+    width: 1.5em; height: 1.5em;
+    border-left: 3px solid $lago;
+    border-bottom: 3px solid $lago;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Ccircle cx='10' cy='28' r='3' fill='%23E9A13B'/%3E%3Ccircle cx='20' cy='19' r='3' fill='%23E9A13B'/%3E%3Ccircle cx='30' cy='9' r='3' fill='%23E9A13B'/%3E%3C/svg%3E");
+    background-size: contain;
+  }
+
+  .fig-tag {
+    display: inline-block;
+    font-family: $font-family-monospace;
+    font-size: .78em;
+    font-weight: 500;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: $lago;
+    margin-bottom: .35em;
+  }
+  .fig-fuente {
+    display: block;
+    margin-top: .4em;
+    font-family: $font-family-monospace;
+    font-size: .82em;
+    color: rgba($tinta-70, .8);
+  }
+  p { margin: 0 0 .3em 0; }
+  p:last-child { margin-bottom: 0; }
+}
+
+// ---------- las tres piezas del modelo (firma de contenido) ----------
+.reveal .tres-piezas {
+  display: flex;
+  align-items: stretch;
+  gap: .45em;
+  margin: .9em 0 .6em;
+
+  .pieza {
+    flex: 1;
+    background: $blanco;
+    border-radius: 12px;
+    border-top: 7px solid $marigold;
+    box-shadow: 0 4px 14px rgba($tinta, .10);
+    padding: .75em .8em;
+    font-size: .66em;
+    line-height: 1.4;
+
+    &.p-media  { border-top-color: $lago; }
+    &.p-ancho  { border-top-color: $marigold; }
+    &.p-pos    { border-top-color: $coral; }
+
+    .pieza-titulo {
+      font-family: $presentation-heading-font;
+      font-weight: 700;
+      font-size: 1.15em;
+      display: block;
+      margin-bottom: .3em;
+    }
+    .pieza-sub {
+      font-family: $font-family-monospace;
+      font-size: .8em;
+      color: $tinta-70;
+      display: block;
+      margin-bottom: .4em;
+    }
+  }
+  > p { margin: 0; align-self: center; flex: 0 0 auto; }
+  .operador {
+    align-self: center;
+    font-family: $presentation-heading-font;
+    font-size: 1.6em;
+    font-weight: 700;
+    color: $tinta-70;
+  }
+}
+
+// ---------- chips de cifras clave ----------
+.reveal .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5em;
+  margin: .8em 0;
+
+  .chip {
+    background: $blanco;
+    border: 1.5px solid $bruma;
+    border-left: 6px solid $marigold;
+    border-radius: 10px;
+    padding: .5em .9em;
+    min-width: 5.5em;
+    box-shadow: 0 3px 10px rgba($tinta,.07);
+
+    .chip-num {
+      display: block;
+      font-family: $presentation-heading-font;
+      font-size: 1.15em;
+      font-weight: 700;
+      color: $tinta;
+      line-height: 1.1;
+    }
+    .chip-lab {
+      display: block;
+      font-size: .52em;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: $tinta-70;
+      margin-top: .25em;
+    }
+  }
+}
+
+// ---------- tarjetas genéricas (columnas comparadas) ----------
+.reveal .tarjeta {
+  background: $blanco;
+  border-radius: 12px;
+  border: 1.5px solid $bruma;
+  box-shadow: 0 4px 14px rgba($tinta,.08);
+  padding: .8em 1em;
+  font-size: .82em;
+  height: 100%;
+
+  .tarjeta-titulo {
+    display: block;
+    font-family: $presentation-heading-font;
+    font-size: 1.05em;
+    font-weight: 700;
+    color: $lago;
+    margin-bottom: .4em;
+  }
+  &.t-alerta .tarjeta-titulo { color: $coral; }
+  &.t-alerta { border-top: 6px solid $coral; }
+  &.t-ok     { border-top: 6px solid $lago; }
+}
+
+// ---------- tablas ----------
+.reveal table {
+  font-size: .62em;
+  border-collapse: collapse;
+  margin: .6em auto;
+
+  th {
+    background: $tinta;
+    color: $blanco;
+    font-family: $font-family-sans-serif;
+    font-weight: 600;
+    letter-spacing: .03em;
+    padding: .55em .8em;
+    border: none;
+  }
+  td {
+    padding: .5em .8em;
+    border: none;
+    border-bottom: 1px solid $bruma;
+  }
+  tbody tr:nth-child(even) td { background: rgba($lago, .05); }
+}
+
+// ---------- bloques de código / fórmulas ----------
+// Panel claro con texto en tinta: alto contraste y legible desde el fondo
+// de la sala. El filete lago a la izquierda lo distingue del texto normal.
+.reveal pre {
+  background: #EDF1EC;
+  border: 1px solid $bruma;
+  border-left: 5px solid $lago;
+  border-radius: 8px;
+  box-shadow: 0 3px 10px rgba($tinta,.08);
+  font-size: .62em;
+  width: 100%;
+}
+.reveal pre code {
+  color: $tinta;
+  background: transparent;
+  padding: .9em 1.1em;
+  line-height: 1.55;
+  font-weight: 500;
+}
+.reveal code:not(pre code) {
+  color: #BE3F3F;
+  background: rgba($coral, .08);
+  border-radius: 5px;
+  padding: .08em .35em;
+  font-size: .85em;
+}
+
+// ---------- listas ----------
+.reveal ul { list-style: none; margin-left: 0; }
+.reveal ul > li {
+  position: relative;
+  padding-left: 1.1em;
+  margin-bottom: .35em;
+  line-height: 1.35;
+}
+.reveal ul > li::before {
+  content: "";
+  position: absolute;
+  left: 0; top: .48em;
+  width: .42em; height: .42em;
+  border-radius: 2px;
+  background: $marigold;
+  transform: rotate(45deg);
+}
+.reveal ul ul > li::before { background: $bruma; }
+.reveal ul ul { margin-top: .35em; }
+
+// diapositivas de limitaciones: viñetas en coral
+.reveal .limitaciones ul > li::before { background: $coral; }
+
+// ---------- cierre ----------
+// Misma paleta oscura que las secciones, pero SIN la franja de curvas:
+// esta lámina lleva texto hasta abajo y la decoración lo taparía.
+.reveal .cierre {
+  h2 { color: $blanco; }
+  strong { color: $marigold; }
+  ul > li::before { background: $marigold; }
+  .eyebrow { color: $marigold; border-color: rgba($marigold,.55); }
+}
+
+.reveal .gracias {
+  font-family: $presentation-heading-font;
+  font-size: 1.6em;
+  font-weight: 700;
+  color: $marigold;
+  margin-top: 1em;
+}
+
+// ---------- accesibilidad / detalles ----------
+.reveal :focus-visible { outline: 3px solid $marigold; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal * { transition: none !important; animation: none !important; }
+}

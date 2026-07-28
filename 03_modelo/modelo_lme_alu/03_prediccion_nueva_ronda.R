@@ -72,7 +72,7 @@ library(tidyverse)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
 
 # Correlación supuesta entre el ensayo y el SIMCE a nivel individual,
 # DENTRO de un colegio. No es estimable con los datos disponibles

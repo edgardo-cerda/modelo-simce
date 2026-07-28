@@ -60,7 +60,7 @@ library(broom)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
 
 school_model_data <- dir_salidas %>% file.path('school_model_data.rds') %>% readRDS()
 
@@ -145,6 +145,9 @@ diag_sd <- map_dfr(names(modelos_sd), function(clave) {
   lim <- limites_sd[[clave]]
   tibble(
     grado = g, area = a,
+    rbd_revisado = dg$rbd_revisado,
+    gse_etiqueta = dg$gse_etiqueta,
+    n_alu_simce  = dg$n_alu_simce,
     sd_observada = dg$sd_simce,
     sd_predicha  = pmin(pmax(predict(modelos_sd[[clave]], newdata = dg), lim[1]), lim[2]),
     sd_historica = dg$sd_hist_colegio
@@ -166,6 +169,7 @@ ggsave(dir_salidas %>% file.path("diagnostico_dispersion.png"), p_sd, width = 8,
 
 # ---- Guardar ----------------------------------------------------------
 saveRDS(modelos_sd, dir_salidas %>% file.path("modelos_dispersion.rds"))
+saveRDS(diag_sd,    dir_salidas %>% file.path("diag_dispersion.rds"))  # lo usa 05
 saveRDS(limites_sd, dir_salidas %>% file.path("limites_dispersion.rds"))
 write_csv(tabla_sd, dir_salidas %>% file.path("metricas_dispersion.csv"))
 

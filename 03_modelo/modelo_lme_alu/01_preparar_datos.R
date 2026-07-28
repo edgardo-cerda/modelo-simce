@@ -139,7 +139,7 @@ ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 ruta_outputs <- rutas$ruta_outputs
 
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
 dir_salidas %>% dir.create(showWarnings = FALSE)
 
 # Parámetros -------------------------------------------------------
@@ -219,14 +219,13 @@ simce_alu0 <- read_parquet(ruta_alu)
 # ---- 2. Limpieza de ensayos -----------------------------------------
 ensayos_limpio <- ensayos %>%
   mutate(
-    ensayo_num   = str_match(evaluacion, "Simce\\s+(\\d+)")[, 2] %>% as.integer(),
-    rbd_revisado = as.integer(rbd_revisado),
-    porcentaje_logro = pmin(porcentaje_logro, 100)
+    porcentaje_logro = pmin(porcentaje_logro, 100),
+    n_evaluacion = as.integer(n_evaluacion)
   ) %>%
-  filter(!is.na(rbd_revisado), !is.na(ensayo_num))
+  filter(!is.na(rbd_revisado), !is.na(n_evaluacion), porcentaje_logro > 0)
 
 ensayos_dedup <- ensayos_limpio %>%
-  group_by(id_usuario_curso, agno, grado, area, ensayo_num, rbd_revisado) %>%
+  group_by(id_usuario_curso, agno, grado, area, n_evaluacion, rbd_revisado) %>%
   summarise(porcentaje_logro = mean(porcentaje_logro), .groups = "drop")
 
 # ---- 2b. SIMCE individual a formato largo ---------------------------
@@ -236,7 +235,7 @@ ensayos_dedup <- ensayos_limpio %>%
 # alumnos matriculados que no rindieron o quedaron excluidos).
 base_alu <- simce_alu0 %>%
   filter(grado %in% GRADOS_MODELO) %>%
-  mutate(agno = as.numeric(agno), rbd_revisado = as.integer(rbd))
+  mutate(agno = as.numeric(agno), rbd_revisado = as.numeric(rbd))
 
 simce_alumno <- bind_rows(
   base_alu %>% transmute(agno, grado, rbd_revisado, idalumno,
@@ -285,8 +284,7 @@ limites_simce <- simce_alumno %>%
 simce_limpio <- simce %>%
   distinct() %>%                       # el archivo trae filas duplicadas exactas en 2024
   filter(promedio_simce > 0) %>%       # 0 = colegio sin resultado publicado ese año/área
-  mutate(rbd = as.integer(rbd)) %>%
-  rename(rbd_revisado = rbd)
+  mutate(rbd_revisado = as.numeric(rbd)) 
 
 contexto_crudo <- simce_limpio %>%
   select(agno, grado, area, rbd_revisado,
@@ -332,7 +330,7 @@ resumen_simple <- ensayos_dedup %>%
 # del colegio: para ordenar estudiantes se usa la versión sin acotar.
 ajustar_crecimiento_grupo <- function(datos_grupo) {
   modelo <- lmer(
-    porcentaje_logro ~ ensayo_num + (1 + ensayo_num | rbd_revisado) + (1 | id_usuario_curso),
+    porcentaje_logro ~ n_evaluacion + (1 + n_evaluacion | rbd_revisado) + (1 | id_usuario_curso),
     data = datos_grupo,
     control = lmerControl(optimizer = "bobyqa")
   )
@@ -342,9 +340,9 @@ ajustar_crecimiento_grupo <- function(datos_grupo) {
   efecto_colegio <- ranef(modelo)$rbd_revisado %>%
     rownames_to_column("rbd_revisado") %>%
     transmute(
-      rbd_revisado        = as.integer(rbd_revisado),
+      rbd_revisado        = as.numeric(rbd_revisado),
       colegio_intercepto  = `(Intercept)`,
-      colegio_slope       = ensayo_num
+      colegio_slope       = n_evaluacion
     )
 
   ranef(modelo)$id_usuario_curso %>%
@@ -357,7 +355,7 @@ ajustar_crecimiento_grupo <- function(datos_grupo) {
     left_join(efecto_colegio, by = "rbd_revisado") %>%
     mutate(
       intercepto_hat       = fe[["(Intercept)"]] + colegio_intercepto + estudiante_intercepto,
-      slope_hat            = fe[["ensayo_num"]] + colegio_slope,
+      slope_hat            = fe[["n_evaluacion"]] + colegio_slope,
       pred_final_logro_raw = intercepto_hat + slope_hat * 6,
       pred_final_logro     = pmin(pmax(pred_final_logro_raw, 0), 100),
       nivel_est            = estudiante_intercepto
@@ -370,12 +368,12 @@ grupos_crecimiento <- ensayos_dedup %>% distinct(agno, grado, area)
 crecimiento_individual <- map_dfr(seq_len(nrow(grupos_crecimiento)), function(i) {
   a  <- grupos_crecimiento$agno[i]
   g  <- grupos_crecimiento$grado[i]
-  AREA <- grupos_crecimiento$area[i]
-  cat("Ajustando modelo de crecimiento:", a, g, AREA, "...\n")
+  ar <- grupos_crecimiento$area[i]
+  cat("Ajustando modelo de crecimiento:", a, g, ar, "...\n")
 
-  datos_grupo <- ensayos_dedup %>% filter(agno == a, grado == g, area == AREA)
+  datos_grupo <- ensayos_dedup %>% filter(agno == a, grado == g, area == ar)
   ajustar_crecimiento_grupo(datos_grupo) %>%
-    mutate(agno = a, grado = g, area = AREA)
+    mutate(agno = a, grado = g, area = ar)
 })
 
 # ---- 5. Features a nivel de estudiante --------------------------------
@@ -418,15 +416,16 @@ school_features <- ind_features %>%
   group_by(agno, grado, area, rbd_revisado) %>%
   summarise(
     n_estudiantes    = n(),
-    mean_logro       = mean(mean_logro, na.rm = TRUE),
+    promedio_mean_logro       = mean(mean_logro, na.rm = TRUE),
     pred_final_logro = mean(pred_final_logro, na.rm = TRUE),
     slope_logro      = mean(slope_logro, na.rm = TRUE),
-    n_evals_prom     = mean(n_evals),
+    n_evals_prom     = mean(n_evals, na.rm = TRUE),
     sd_entre_estud   = sd(mean_logro, na.rm = TRUE),
     iqr_logro_ensayo = quantile(mean_logro, 0.90, names = FALSE) -
                        quantile(mean_logro, 0.10, names = FALSE),
     .groups = "drop"
-  )
+  ) %>% 
+  rename(mean_logro = promedio_mean_logro)
 
 # ---- 5c. Contexto REZAGADO de los colegios Santillana (NUEVO) ---------
 # Para cada año objetivo, el último registro de contexto estrictamente
@@ -457,13 +456,13 @@ cat(sprintf("\nCobertura del contexto rezagado en colegios Santillana: %.1f%%\n"
             100 * cobertura_ctx))
 
 # Los colegios objetivo de cada grupo, con su contexto rezagado pegado.
-colegios_objetivo <- function(a, g, AREA) {
+colegios_objetivo <- function(a, g, ar) {
   school_features %>%
-    filter(agno == a, grado == g, area == AREA) %>%
+    filter(agno == a, grado == g, area == ar) %>%
     select(rbd_revisado) %>%
     left_join(
       contexto_rezagado %>%
-        filter(agno == a, grado == g, area == AREA) %>%
+        filter(agno == a, grado == g, area == ar) %>%
         select(rbd_revisado, cod_grupo, cod_depe1, cod_rural_rbd, f_gse, f_depe, f_rural),
       by = "rbd_revisado"
     )
@@ -489,7 +488,8 @@ colegios_objetivo <- function(a, g, AREA) {
 # Un colegio sin historia queda con desvio_colegio = 0, es decir "se
 # comporta como los de su contexto" — bastante mejor prior que el 0 de
 # la versión anterior, que equivalía a "se comporta como el país".
-estimar_efecto_historico <- function(nacional, objetivo, anio_objetivo, grado_obj, area_obj) {
+estimar_efecto_historico <- function(nacional, objetivo, anio_objetivo,
+                                    grado_obj, area_obj, sd_tipica = NA_real_) {
 
   vacio <- objetivo %>%
     transmute(rbd_revisado,
@@ -505,46 +505,83 @@ estimar_efecto_historico <- function(nacional, objetivo, anio_objetivo, grado_ob
   anio_ref <- max(previos$agno)
   n_anios  <- n_distinct(previos$agno)
 
-  # Con un solo año previo no se puede separar el efecto de año del de
-  # colegio, pero el de contexto sí es identificable: se ajusta sin
-  # factor(agno).
-  formula_hist <- if (n_anios >= 2) {
-    promedio_simce ~ factor(agno) + f_gse + f_depe + f_rural + (1 | rbd_revisado)
+  # ¿Se puede estimar un intercepto aleatorio por colegio? Sólo si hay
+  # más observaciones que colegios, es decir si al menos parte de los
+  # colegios aparece en 2+ años. Con un solo año previo (caso de 2023,
+  # que sólo tiene 2022 antes) hay exactamente una fila por colegio: el
+  # efecto aleatorio no es identificable y lme4 aborta con
+  # "number of levels of each grouping factor must be < number of
+  # observations". La parte de contexto SÍ es estimable en ese caso
+  # (miles de colegios reparten 5 GSE x 6 dependencias x 2 ruralidades),
+  # así que se ajusta sólo la parte fija y el desvío del colegio se
+  # calcula a mano como residuo encogido.
+  usar_mixto <- n_distinct(previos$rbd_revisado) < nrow(previos)
+
+  if (usar_mixto) {
+
+    formula_hist <- if (n_anios >= 2) {
+      promedio_simce ~ factor(agno) + f_gse + f_depe + f_rural + (1 | rbd_revisado)
+    } else {
+      promedio_simce ~ f_gse + f_depe + f_rural + (1 | rbd_revisado)
+    }
+
+    modelo <- lmer(formula_hist, data = previos,
+                   control = lmerControl(optimizer = "bobyqa"))
+
+    predecir_fijo <- function(nd) predict(modelo, newdata = nd,
+                                          re.form = NA, allow.new.levels = TRUE)
+
+    desvios <- ranef(modelo)$rbd_revisado %>%
+      rownames_to_column("rbd_revisado") %>%
+      transmute(rbd_revisado = as.integer(rbd_revisado),
+                desvio_colegio = `(Intercept)`)
+
   } else {
-    promedio_simce ~ f_gse + f_depe + f_rural + (1 | rbd_revisado)
+
+    modelo <- lm(promedio_simce ~ f_gse + f_depe + f_rural, data = previos)
+    predecir_fijo <- function(nd) predict(modelo, newdata = nd)
+
+    # Encogimiento hecho a mano, replicando lo que haría lme4 si pudiera:
+    # el residuo de un colegio mezcla su desvío real con el error de
+    # muestreo de su promedio (sd interna^2 / n alumnos). La proporción
+    # que es señal es lambda = var_real / (var_real + var_error), y el
+    # residuo se multiplica por ella. Sin esto, un colegio de 15 alumnos
+    # con un promedio alto por azar arrastraría ese azar al año
+    # siguiente como si fuera una característica suya.
+    residuos  <- residuals(modelo)
+    var_total <- var(residuos)
+    var_error <- if (!is.na(sd_tipica) && "nalu" %in% names(previos)) {
+      mean(sd_tipica^2 / pmax(previos$nalu, 1), na.rm = TRUE)
+    } else 0
+    lambda <- if (var_total > 0) max(var_total - var_error, 0) / var_total else 0
+
+    cat(sprintf("   (un solo año previo: efecto de colegio por residuo encogido, lambda = %.2f)\n",
+                lambda))
+
+    desvios <- tibble(
+      rbd_revisado   = previos$rbd_revisado,
+      desvio_colegio = lambda * residuos
+    ) %>%
+      group_by(rbd_revisado) %>%
+      summarise(desvio_colegio = mean(desvio_colegio), .groups = "drop")
   }
-  print(0)
-  
-  modelo <- lmer(formula_hist, data = previos,
-                 control = lmerControl(optimizer = "bobyqa"))
-  print(1)
-  
-  # Centrado: predicción media de efectos fijos sobre el universo
+
+  # Centrado: predicción media de la parte fija sobre el universo
   # nacional en el año de referencia.
   nd_nacional   <- previos %>% filter(agno == anio_ref)
-  base_nacional <- mean(predict(modelo, newdata = nd_nacional, re.form = NA))
-
-  print(2)
-  desvios <- ranef(modelo)$rbd_revisado %>%
-    rownames_to_column("rbd_revisado") %>%
-    transmute(rbd_revisado = as.integer(rbd_revisado),
-              desvio_colegio = `(Intercept)`)
+  base_nacional <- mean(predecir_fijo(nd_nacional))
 
   n_hist <- previos %>% count(rbd_revisado, name = "n_anios_hist")
 
   obj <- objetivo %>% mutate(agno = anio_ref)
   ok  <- contexto_completo(obj)
-  print(3)
-  
+
   # Colegios sin contexto conocido: expectativa 0 = promedio nacional.
   obj$contexto_nivel <- 0
   if (any(ok)) {
-    obj$contexto_nivel[ok] <- predict(modelo, newdata = obj[ok, ],
-                                      re.form = NA, allow.new.levels = TRUE) - base_nacional
+    obj$contexto_nivel[ok] <- predecir_fijo(obj[ok, ]) - base_nacional
   }
 
-  print(5)
-  
   obj %>%
     select(rbd_revisado, contexto_nivel) %>%
     left_join(desvios, by = "rbd_revisado") %>%
@@ -556,21 +593,21 @@ estimar_efecto_historico <- function(nacional, objetivo, anio_objetivo, grado_ob
     )
 }
 
-
-estimar_efecto_historico(simce_nacional, 
-                         colegios_objetivo(AGNO, GRADO, AREA), 
-                         AGNO, GRADO, AREA)
-
+# sd interna típica de los años previos: la necesita el encogimiento
+# manual de arriba para saber cuánto del residuo de un colegio es ruido.
+sd_tipica_previa <- function(a, g, ar) {
+  x <- simce_dist %>% filter(agno < a, grado == g, area == ar)
+  if (nrow(x) == 0) NA_real_ else mean(x$sd_simce)
+}
 
 efecto_historico <- map_dfr(seq_len(nrow(anios_objetivo)), function(i) {
-  AGNO  <- anios_objetivo$agno[i]
-  GRADO  <- anios_objetivo$grado[i]
-  AREA <- anios_objetivo$area[i]
-  cat("Efecto histórico + contexto:", AGNO, GRADO, AREA, "...\n")
-  estimar_efecto_historico(simce_nacional, 
-                           colegios_objetivo(AGNO, GRADO, AREA), 
-                           AGNO, GRADO, AREA) %>%
-    mutate(agno = AGNO, grado = GRADO, area = AREA)
+  a  <- anios_objetivo$agno[i]
+  g  <- anios_objetivo$grado[i]
+  ar <- anios_objetivo$area[i]
+  cat("Efecto histórico + contexto:", a, g, ar, "...\n")
+  estimar_efecto_historico(simce_nacional, colegios_objetivo(a, g, ar), a, g, ar,
+                           sd_tipica = sd_tipica_previa(a, g, ar)) %>%
+    mutate(agno = a, grado = g, area = ar)
 })
 
 # ---- 6b. Dispersión histórica, con prior contextual (MODIFICADO) ------
@@ -601,19 +638,53 @@ estimar_sd_historica <- function(dist_nac, objetivo, anio_objetivo, grado_obj, a
   anio_ref <- max(previos$agno)
   n_anios  <- n_distinct(previos$agno)
 
-  formula_sd <- if (n_anios >= 2) {
-    sd_simce ~ factor(agno) + f_gse + f_depe + f_rural + (1 | rbd_revisado)
+  # Mismo problema de identificabilidad que en la sección 6: con un solo
+  # año previo hay una fila por colegio y el intercepto aleatorio no es
+  # estimable. Acá el encogimiento manual es aún más necesario, porque la
+  # sd muestral de un colegio chico es ruidosísima: su varianza de
+  # muestreo es aproximadamente sd^2 / (2(n-1)).
+  usar_mixto <- n_distinct(previos$rbd_revisado) < nrow(previos)
+
+  if (usar_mixto) {
+
+    formula_sd <- if (n_anios >= 2) {
+      sd_simce ~ factor(agno) + f_gse + f_depe + f_rural + (1 | rbd_revisado)
+    } else {
+      sd_simce ~ f_gse + f_depe + f_rural + (1 | rbd_revisado)
+    }
+
+    modelo <- lmer(formula_sd, data = previos,
+                   control = lmerControl(optimizer = "bobyqa"))
+
+    predecir_fijo <- function(nd) predict(modelo, newdata = nd,
+                                          re.form = NA, allow.new.levels = TRUE)
+
+    desvios <- ranef(modelo)$rbd_revisado %>%
+      rownames_to_column("rbd_revisado") %>%
+      transmute(rbd_revisado = as.integer(rbd_revisado),
+                desvio_sd = `(Intercept)`)
+
   } else {
-    sd_simce ~ f_gse + f_depe + f_rural + (1 | rbd_revisado)
+
+    modelo <- lm(sd_simce ~ f_gse + f_depe + f_rural, data = previos)
+    predecir_fijo <- function(nd) predict(modelo, newdata = nd)
+
+    residuos  <- residuals(modelo)
+    var_total <- var(residuos)
+    var_error <- mean(previos$sd_simce^2 / (2 * pmax(previos$n_alu_simce - 1, 1)),
+                      na.rm = TRUE)
+    lambda <- if (var_total > 0) max(var_total - var_error, 0) / var_total else 0
+
+    cat(sprintf("   (un solo año previo: desvío de sd por residuo encogido, lambda = %.2f)\n",
+                lambda))
+
+    desvios <- tibble(
+      rbd_revisado = previos$rbd_revisado,
+      desvio_sd    = lambda * residuos
+    ) %>%
+      group_by(rbd_revisado) %>%
+      summarise(desvio_sd = mean(desvio_sd), .groups = "drop")
   }
-
-  modelo <- lmer(formula_sd, data = previos,
-                 control = lmerControl(optimizer = "bobyqa"))
-
-  desvios <- ranef(modelo)$rbd_revisado %>%
-    rownames_to_column("rbd_revisado") %>%
-    transmute(rbd_revisado = as.integer(rbd_revisado),
-              desvio_sd = `(Intercept)`)
 
   n_hist <- previos %>% count(rbd_revisado, name = "n_anios_sd_hist")
 
@@ -622,8 +693,7 @@ estimar_sd_historica <- function(dist_nac, objetivo, anio_objetivo, grado_obj, a
 
   obj$contexto_sd <- mean(previos$sd_simce)   # respaldo: sd nacional promedio
   if (any(ok)) {
-    obj$contexto_sd[ok] <- predict(modelo, newdata = obj[ok, ],
-                                   re.form = NA, allow.new.levels = TRUE)
+    obj$contexto_sd[ok] <- predecir_fijo(obj[ok, ])
   }
 
   obj %>%
@@ -641,10 +711,10 @@ estimar_sd_historica <- function(dist_nac, objetivo, anio_objetivo, grado_obj, a
 sd_historica <- map_dfr(seq_len(nrow(anios_objetivo)), function(i) {
   a  <- anios_objetivo$agno[i]
   g  <- anios_objetivo$grado[i]
-  AREA <- anios_objetivo$area[i]
-  cat("Dispersión histórica + contexto:", a, g, AREA, "...\n")
-  estimar_sd_historica(dist_nacional, colegios_objetivo(a, g, AREA), a, g, AREA) %>%
-    mutate(agno = a, grado = g, area = AREA)
+  ar <- anios_objetivo$area[i]
+  cat("Dispersión histórica + contexto:", a, g, ar, "...\n")
+  estimar_sd_historica(dist_nacional, colegios_objetivo(a, g, ar), a, g, ar) %>%
+    mutate(agno = a, grado = g, area = ar)
 })
 
 
@@ -712,14 +782,14 @@ forma_z <- map_dfr(seq_len(nrow(anios_objetivo)), function(i) {
 # Cortes de tercil para asignar cada colegio a una plantilla de forma
 # en el momento de predecir (usando su media PREDICHA, no la observada).
 cortes_tercil <- map_dfr(seq_len(nrow(anios_objetivo)), function(i) {
-  a <- anios_objetivo$agno[i]; g <- anios_objetivo$grado[i]; AREA <- anios_objetivo$area[i]
-  previos <- simce_dist %>% filter(agno < a, grado == g, area == AREA)
+  a <- anios_objetivo$agno[i]; g <- anios_objetivo$grado[i]; ar <- anios_objetivo$area[i]
+  previos <- simce_dist %>% filter(agno < a, grado == g, area == ar)
   if (nrow(previos) == 0) {
-    return(tibble(agno = a, grado = g, area = AREA,
+    return(tibble(agno = a, grado = g, area = ar,
                   corte_1 = NA_real_, corte_2 = NA_real_))
   }
   q <- quantile(previos$media_simce_alu, c(1/3, 2/3), names = FALSE)
-  tibble(agno = a, grado = g, area = AREA, corte_1 = q[1], corte_2 = q[2])
+  tibble(agno = a, grado = g, area = ar, corte_1 = q[1], corte_2 = q[2])
 })
 
 # ---- 6d. Confiabilidades (NUEVO, sólo diagnóstico) --------------------
@@ -747,7 +817,7 @@ conf_simce <- simce_alumno %>%
   )
 
 conf_ensayo <- ensayos_dedup %>%
-  group_by(agno, grado, area, ensayo_num) %>%
+  group_by(agno, grado, area, n_evaluacion) %>%
   mutate(x = porcentaje_logro - mean(porcentaje_logro)) %>%   # quita dificultad del ensayo
   group_by(agno, grado, area, id_usuario_curso) %>%
   filter(n() >= 2) %>%
@@ -866,7 +936,263 @@ print(
     pivot_wider(names_from = gse_etiqueta, values_from = n, values_fill = 0)
 )
 
+# ---- 8b. Descriptivos para la presentación (NUEVO) ---------------------
+# Estas tablas se calculan ACÁ y no en 05_figuras_presentacion.R porque
+# dependen del archivo de alumnos completo (~2,6 M filas) y de las bases
+# nacionales, que en este punto ya están en memoria. Lo que se guarda es
+# el resumen —unas pocas decenas de filas y una grilla de densidad de 256
+# puntos por grupo—, no los datos crudos: la presentación queda liviana y
+# no necesita acceso a los parquet.
+desc_ensayos <- ensayos_dedup %>%
+  group_by(agno, grado, area) %>%
+  summarise(
+    n_colegios_ensayo = n_distinct(rbd_revisado),
+    n_estudiantes     = n_distinct(id_usuario_curso),
+    n_ensayos         = n(),
+    logro_medio       = mean(porcentaje_logro),
+    logro_sd          = sd(porcentaje_logro),
+    ensayos_por_est   = n() / n_distinct(id_usuario_curso),
+    .groups = "drop"
+  )
+
+desc_simce_alu <- simce_alumno %>%
+  group_by(agno, grado, area) %>%
+  summarise(
+    n_alumnos        = n(),
+    n_colegios_simce = n_distinct(rbd_revisado),
+    ptje_medio       = mean(ptje),
+    ptje_sd          = sd(ptje),
+    ptje_p10         = quantile(ptje, 0.10, names = FALSE),
+    ptje_p90         = quantile(ptje, 0.90, names = FALSE),
+    .groups = "drop"
+  )
+
+# Dispersión INTERNA típica (entre alumnos del mismo colegio): es la
+# magnitud que el modelo de 02b tiene que acertar.
+desc_sd_interna <- simce_dist %>%
+  group_by(agno, grado, area) %>%
+  summarise(
+    n_colegios       = n(),
+    sd_interna_media = mean(sd_simce),
+    sd_interna_p10   = quantile(sd_simce, 0.10, names = FALSE),
+    sd_interna_p90   = quantile(sd_simce, 0.90, names = FALSE),
+    .groups = "drop"
+  )
+
+# Curva de densidad de los puntajes individuales del último año, ya
+# evaluada en una grilla: evita mover millones de puntos a la presentación.
+dens_simce_alu <- simce_alumno %>%
+  filter(agno == max(agno)) %>%
+  group_by(grado, area) %>%
+  group_modify(~ {
+    d <- density(.x$ptje, n = 256)
+    tibble(x = d$x, y = d$y)
+  }) %>%
+  ungroup()
+
+# Composición por GSE: colegios con ensayo vs. universo nacional. Es la
+# evidencia de que la base no es representativa (limitación del punto 5).
+comp_gse <- bind_rows(
+  school_features %>%
+    filter(agno == max(agno), area == "matematica") %>%
+    distinct(grado, rbd_revisado, gse_etiqueta) %>%
+    count(grado, gse_etiqueta, name = "n") %>%
+    mutate(fuente = "santillana"),
+  simce_nacional %>%
+    filter(agno == max(agno), grado %in% GRADOS_MODELO, area == "matematica") %>%
+    left_join(etiquetas_gse, by = "cod_grupo") %>%
+    distinct(grado, rbd_revisado, gse_etiqueta) %>%
+    count(grado, gse_etiqueta, name = "n") %>%
+    mutate(fuente = "nacional")
+) %>%
+  filter(!is.na(gse_etiqueta)) %>%
+  mutate(gse_etiqueta = factor(gse_etiqueta,
+                               levels = etiquetas_gse$gse_etiqueta)) %>%
+  group_by(fuente, grado) %>%
+  mutate(prop = n / sum(n)) %>%
+  ungroup()
+
+# Cobertura del ensayo respecto del SIMCE, por colegio: sostiene el
+# argumento de que el ensayo cubre el curso completo.
+cobertura_ensayo <- school_features %>%
+  select(agno, grado, area, rbd_revisado, n_estudiantes) %>%
+  inner_join(simce_dist %>% select(agno, grado, area, rbd_revisado, n_alu_simce),
+             by = c("agno", "grado", "area", "rbd_revisado")) %>%
+  mutate(cobertura = n_estudiantes / n_alu_simce) %>%
+  group_by(agno, grado, area) %>%
+  summarise(cobertura_mediana = median(cobertura),
+            n_colegios = n(), .groups = "drop")
+
+# --- Resumen por año de cada fuente ------------------------------------
+# Tamaño de cada base, en los términos en que se describe en la
+# presentación: cuántos colegios y cuántos alumnos distintos hay por año.
+desc_simce_anio <- simce_alumno %>%
+  group_by(agno) %>%
+  summarise(
+    n_colegios = n_distinct(rbd_revisado),
+    n_alumnos  = n_distinct(idalumno),
+    n_puntajes = n(),                      # alumno x área
+    .groups = "drop"
+  )
+
+# En los ensayos, un mismo alumno rinde varias veces y en dos áreas: el
+# promedio se calcula por alumno-área, que es la unidad que después usa
+# el modelo de crecimiento.
+desc_ensayos_anio <- ensayos_dedup %>%
+  group_by(agno) %>%
+  summarise(
+    n_colegios          = n_distinct(rbd_revisado),
+    n_alumnos           = n_distinct(id_usuario_curso),
+    n_ensayos           = n(),
+    ensayos_por_alumno  = n() / n_distinct(paste(id_usuario_curso, area)),
+    .groups = "drop"
+  )
+
+# --- Varianza dentro y entre colegios ----------------------------------
+# Descomposición exacta (suma de cuadrados) de la varianza de los puntajes
+# individuales. Es el argumento numérico de por qué no basta con predecir
+# el promedio del colegio: buena parte de la variación ocurre ENTRE
+# estudiantes del mismo colegio, no entre colegios.
+varianza_simce <- simce_alumno %>%
+  filter(agno == max(agno)) %>%
+  group_by(grado, area) %>%
+  group_modify(function(.x, .y) {
+    media_global <- mean(.x$ptje)
+    por_colegio <- .x %>%
+      group_by(rbd_revisado) %>%
+      summarise(n = n(), media = mean(ptje),
+                ss = sum((ptje - mean(ptje))^2), .groups = "drop")
+    ss_entre  <- sum(por_colegio$n * (por_colegio$media - media_global)^2)
+    ss_dentro <- sum(por_colegio$ss)
+    ss_total  <- ss_entre + ss_dentro
+    gl        <- nrow(.x) - 1
+    tibble(
+      n_alumnos  = nrow(.x),
+      n_colegios = nrow(por_colegio),
+      var_total  = ss_total / gl,
+      var_entre  = ss_entre / gl,
+      var_dentro = ss_dentro / gl,
+      sd_total   = sqrt(ss_total / gl),
+      sd_entre   = sqrt(ss_entre / gl),
+      sd_dentro  = sqrt(ss_dentro / gl),
+      pct_entre  = ss_entre / ss_total,
+      pct_dentro = ss_dentro / ss_total
+    )
+  }) %>%
+  ungroup()
+
+cat("\nDescomposición de la varianza del SIMCE (último año):\n")
+print(varianza_simce %>%
+        transmute(grado, area, sd_total = round(sd_total, 1),
+                  `% entre colegios` = round(100 * pct_entre),
+                  `% dentro del colegio` = round(100 * pct_dentro)))
+
+# --- Un colegio de ejemplo ---------------------------------------------
+# Para mostrar en concreto que dentro de un solo colegio hay mucha
+# variación se elige el colegio con más alumnos del grupo de referencia.
+# Se exportan sus puntajes (unos cientos de valores) y la densidad
+# nacional del mismo grupo, como referencia.
+GRADO_EJEMPLO <- "4b"
+AREA_EJEMPLO  <- "matematica"
+
+ejemplo_grupo <- simce_alumno %>%
+  filter(agno == max(agno), grado == GRADO_EJEMPLO, area == AREA_EJEMPLO)
+
+rbd_ejemplo <- ejemplo_grupo %>%
+  count(rbd_revisado) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>%
+  pull(rbd_revisado)
+
+puntajes_ejemplo <- ejemplo_grupo %>% filter(rbd_revisado == rbd_ejemplo)
+
+dens_ref <- density(ejemplo_grupo$ptje, n = 256)
+
+colegio_ejemplo <- list(
+  meta = tibble(
+    agno            = max(simce_alumno$agno),
+    grado           = GRADO_EJEMPLO,
+    area            = AREA_EJEMPLO,
+    rbd             = rbd_ejemplo,
+    n_alumnos       = nrow(puntajes_ejemplo),
+    media_colegio   = mean(puntajes_ejemplo$ptje),
+    sd_colegio      = sd(puntajes_ejemplo$ptje),
+    media_nacional  = mean(ejemplo_grupo$ptje),
+    sd_nacional     = sd(ejemplo_grupo$ptje)
+  ),
+  puntajes      = puntajes_ejemplo %>% select(ptje),
+  dens_nacional = tibble(x = dens_ref$x, y = dens_ref$y)
+)
+
+# --- Ensayos: forma y progresión ---------------------------------------
+dens_logro_ensayo <- ind_features %>%
+  filter(agno == max(agno)) %>%
+  group_by(grado, area) %>%
+  group_modify(~ {
+    d <- density(.x$mean_logro, n = 256)
+    tibble(x = d$x, y = d$y)
+  }) %>%
+  ungroup()
+
+# ¿Sube el logro a medida que avanzan los ensayos del año? Es la señal
+# que recoge `slope_logro`.
+logro_por_evaluacion <- ensayos_dedup %>%
+  group_by(agno, grado, area, n_evaluacion) %>%
+  summarise(logro_medio = mean(porcentaje_logro),
+            n_obs = n(), .groups = "drop") %>%
+  filter(n_obs >= 30)
+
+# --- Evolución conjunta de ambas fuentes -------------------------------
+# En escalas distintas no son comparables, así que cada serie se
+# estandariza dentro de su grado x área: lo que interesa es si se mueven
+# juntas de un año a otro, no su nivel.
+z_seguro <- function(x) if (length(x) > 1 && sd(x) > 0) (x - mean(x)) / sd(x) else 0
+
+evolucion_fuentes <- school_model_data %>%
+  group_by(agno, grado, area) %>%
+  summarise(n_colegios = n(),
+            simce = mean(promedio_simce, na.rm = TRUE),
+            logro = mean(mean_logro, na.rm = TRUE),
+            .groups = "drop") %>%
+  group_by(grado, area) %>%
+  mutate(z_simce = z_seguro(simce), z_logro = z_seguro(logro)) %>%
+  ungroup()
+
+# --- SIMCE promedio por GSE --------------------------------------------
+# Sobre el universo nacional, que es donde hay variación en GSE.
+simce_por_gse <- simce_nacional %>%
+  filter(agno == max(agno), grado %in% GRADOS_MODELO) %>%
+  left_join(etiquetas_gse, by = "cod_grupo") %>%
+  filter(!is.na(gse_etiqueta)) %>%
+  group_by(grado, area, gse_etiqueta) %>%
+  summarise(n_colegios  = n(),
+            simce_medio = mean(promedio_simce),
+            simce_sd    = sd(promedio_simce),
+            .groups = "drop") %>%
+  mutate(gse_etiqueta = factor(gse_etiqueta, levels = etiquetas_gse$gse_etiqueta))
+
+descriptivos <- list(
+  desc_ensayos         = desc_ensayos,
+  desc_simce_alu       = desc_simce_alu,
+  desc_sd_interna      = desc_sd_interna,
+  desc_simce_anio      = desc_simce_anio,
+  desc_ensayos_anio    = desc_ensayos_anio,
+  dens_simce_alu       = dens_simce_alu,
+  dens_logro_ensayo    = dens_logro_ensayo,
+  logro_por_evaluacion = logro_por_evaluacion,
+  varianza_simce       = varianza_simce,
+  colegio_ejemplo      = colegio_ejemplo,
+  evolucion_fuentes    = evolucion_fuentes,
+  simce_por_gse        = simce_por_gse,
+  comp_gse             = comp_gse,
+  cobertura_ensayo     = cobertura_ensayo,
+  confiabilidades      = confiabilidades
+)
+
+cat("\nDescriptivos para la presentación (último año):\n")
+print(desc_simce_alu %>% filter(agno == max(agno)))
+
 # ---- 9. Guardar --------------------------------------------------------
+saveRDS(descriptivos,      dir_salidas %>% file.path("descriptivos.rds"))
 saveRDS(ind_features,      dir_salidas %>% file.path("ind_features.rds"))
 saveRDS(school_features,   dir_salidas %>% file.path("school_features.rds"))
 saveRDS(school_model_data, dir_salidas %>% file.path("school_model_data.rds"))
