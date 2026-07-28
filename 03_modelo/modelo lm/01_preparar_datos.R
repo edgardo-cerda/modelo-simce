@@ -30,7 +30,8 @@ library(tidyverse)
 
 # ---- 0. Configuración --------------------------------------------
 # Configurar rutas de archivos: ----
-rutas <- config::get(file = "config.yml")
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
 ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 ruta_outputs <- rutas$ruta_outputs
@@ -43,11 +44,11 @@ dir_salidas %>% dir.create(showWarnings = FALSE)
 # Cargar datos ----
 ## ENSAYOS ----
 ensayos_santillana0 <- ruta_data_intermedia %>% 
-  file.path('ensayo_simce', 'consolidado_ensayo_simce.parquet') %>% 
+  file.path('ensayo_santillana', 'consolidado_ensayo_santillana.parquet') %>% 
   read_parquet()
 
 diccionario_rbd <- ruta_data_intermedia %>% 
-  file.path('ensayo_simce', 'diccionario_rbd_ensayo.xlsx') %>%
+  file.path('ensayo_santillana', 'diccionario_rbd_ensayo.xlsx') %>%
   read_excel() %>% 
   select(id_colegio, rbd_revisado)
 
@@ -87,7 +88,7 @@ ensayos_limpio <- ensayos %>%
     # distorsionar los promedios.
     porcentaje_logro = pmin(porcentaje_logro, 100)
   ) %>%
-  rename(grado = nivel) %>%
+  #rename(grado = nivel) %>%
   filter(!is.na(rbd_revisado), !is.na(ensayo_num))
 
 # Un mismo estudiante puede tener 2 registros para el mismo número de
