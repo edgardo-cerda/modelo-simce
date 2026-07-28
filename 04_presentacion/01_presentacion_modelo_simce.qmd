@@ -401,17 +401,6 @@ $$\text{pred}_i = \hat{\mu}_{\text{colegio}} + \hat{\sigma}_{\text{colegio}} \cd
 - A cada estudiante se le asigna el puntaje que corresponde a **su percentil** dentro de la distribución predicha de su colegio.
 - Por construcción, el conjunto de predicciones de un colegio **reproduce la distribución completa** que debería tener: media, ancho, forma y colas.
 
-## La forma que reemplaza a la normal
-
-[Plantilla empírica de la distribución interna]{.eyebrow}
-
-```{r}
-#| fig-align: center
-mostrar_grafico(
-  "g_forma_z",
-  "Función de cuantiles del puntaje estandarizado dentro del colegio, por tercil de nivel, comparada con la normal: los colegios de nivel bajo tienen la cola derecha más larga y los de nivel alto, la izquierda.",
-  "01_preparar_datos.R -> forma_z.rds")
-```
 
 ## ¿Qué preguntas responde?
 
