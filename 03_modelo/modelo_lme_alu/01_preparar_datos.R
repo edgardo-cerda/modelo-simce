@@ -193,11 +193,11 @@ contexto_completo <- function(d) {
 # ---- 1. Cargar datos -----------------------------------------------
 
 ## ENSAYOS ----
-ensayos_santillana0 <- ruta_data_intermedia %>%
+ensayos_santillana <- ruta_data_intermedia %>%
   file.path('ensayo_santillana', 'ensayos_santillana_corregido.parquet') %>%
   read_parquet()
 
-ensayos <- ensayos_santillana0 %>%
+ensayos <- ensayos_santillana %>%
   mutate(agno = as.numeric(agno)) |>
   filter(!outlier_iqr, !outlier_isoforest)
 
@@ -1190,7 +1190,7 @@ descriptivos <- list(
 
 cat("\nDescriptivos para la presentación (último año):\n")
 print(desc_simce_alu %>% filter(agno == max(agno)))
-
+# 
 # ---- 9. Guardar --------------------------------------------------------
 saveRDS(descriptivos,      dir_salidas %>% file.path("descriptivos.rds"))
 saveRDS(ind_features,      dir_salidas %>% file.path("ind_features.rds"))
