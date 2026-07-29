@@ -60,7 +60,6 @@ outputs/
 *.csv2
 *.parquet
 *.xlsx
-*.html
 *.js
 *.css
 *.map
