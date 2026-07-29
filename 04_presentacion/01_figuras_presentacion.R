@@ -299,9 +299,6 @@ tablas$t_distribucional <- construir("t_distribucional", list(val_dist), {
       `Error de cuantiles` = round(qmae_B, 1),
       `Baseline: solo la media` = round(qmae_solo_media, 1)
     )
-  if ("qmae_B_oraculo" %in% names(base)) {
-    out$`Con media y sd observadas` <- round(base$qmae_B_oraculo, 1)
-  }
   out$`sd observada`  <- round(base$sd_observada, 1)
   out$`sd predicha`   <- round(base$sd_efectiva_B, 1)
   out
