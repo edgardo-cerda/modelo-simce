@@ -7,19 +7,15 @@ lang: es
 format:
   revealjs:
     theme: [default, tema_simce.scss]
+    embed-resources: true
+    include-after-body: ajustar_graficos.html
     slide-number: c/t
-    # Las secciones de nivel 1 crean pilas verticales; en modo lineal las
-    # flechas recorren TODAS las láminas en orden, sin saltarse ninguna.
     navigation-mode: linear
     transition: fade
     transition-speed: fast
     footer: "Modelo de predicción SIMCE"
     title-slide-attributes:
       data-background-color: "#10303B"
-    # Reajusta los gráficos de plotly al ancho real de cada lámina cuando
-    # ésta se muestra. Sin esto quedan con el ancho que midieron al
-    # dibujarse (con la lámina oculta) y se salen de la diapositiva.
-    include-after-body: ajustar_graficos.html
 execute:
   echo: false
   warning: false
