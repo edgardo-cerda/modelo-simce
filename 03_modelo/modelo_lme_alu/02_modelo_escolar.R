@@ -104,6 +104,8 @@ for (i in seq_len(nrow(grupos))) {
   resultados[[clave]] <- tibble(
     grado = g, area = a,
     n_train = nrow(train), n_test = nrow(test),
+    # promedios del año de prueba: los reporta la presentación junto al MAE
+    media_pred_test = mean(pred), media_obs_test = mean(obs),
     mae = mae_modelo, rmse = rmse_modelo, mae_baseline = mae_baseline,
     mejora_vs_baseline_pct = 100 * (mae_baseline - mae_modelo) / mae_baseline,
     r2_test = r2_test,
@@ -149,6 +151,7 @@ diag_plot_data <- map_dfr(names(modelos), function(clave) {
     depe2_etiqueta = datos_grupo$depe2_etiqueta,
     n_anios_hist  = datos_grupo$n_anios_hist,
     n_estudiantes = datos_grupo$n_estudiantes,
+    mean_logro    = datos_grupo$mean_logro,
     observado = datos_grupo$promedio_simce,
     predicho  = predict(modelos[[clave]], newdata = datos_grupo)
   )

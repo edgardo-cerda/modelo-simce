@@ -1,12 +1,12 @@
 default:
   ruta_data_in: "C:/Users/Usuario/OneDrive/modelo-simce/data_in"
   ruta_data_intermedia: "C:/Users/Usuario/OneDrive/modelo-simce/data_intermedia"
-  ruta_outputs: "C:/Users/Usuario/OneDrive/modelo-simce/outputs"
+  ruta_outputs: "C:/Users/Usuario/OneDrive/modelo-simce/data_out"
 
 Usuario:
-  ruta_data_in: "C:/Users/Usuario/OneDrive/data_in/simce_agencia_calidad_educacion"
-  ruta_data_intermedia: "C:/Users/Usuario/OneDrive/modelo-simce/data_intermedia"
-  ruta_outputs: "C:/Users/Usuario/OneDrive/modelo-simce/outputs"
+  ruta_data_in: "C:/Users/Usuario/OneDrive/modelo-simce-datos/data_in"
+  ruta_data_intermedia: "C:/Users/Usuario/OneDrive/modelo-simce-datos/data_intermedia"
+  ruta_outputs: "C:/Users/Usuario/OneDrive/modelo-simce-datos/data_out"
 
 escerdae:
   ruta_data_in: "C:/Users/escerdae/OneDrive - Instituto Nacional de Estadisticas/personal/otros/data_in/"
