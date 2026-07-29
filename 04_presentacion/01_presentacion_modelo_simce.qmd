@@ -528,6 +528,20 @@ mostrar_grafico(
   "04_validacion_individual.R -> dens_validacion.rds")
 ```
 
+## ¿Cuántos estudiantes en cada nivel de aprendizaje?
+
+[La misma validación, en la unidad que usa el colegio]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_niveles_logro",
+  "Porcentaje de estudiantes en cada Nivel de Aprendizaje según el SIMCE real y según la predicción del modelo, por grado y área.",
+  "04_validacion_individual.R -> niveles_logro.rds")
+```
+
+Los cortes son los oficiales de los **Estándares de Aprendizaje**, no salen de estos datos. Acertar la composición por nivel es más exigente que acertar el promedio: un corrimiento de pocos puntos en la predicción mueve a todos los estudiantes que están cerca de un corte.
+
 
 # Limitaciones {.seccion background-color="#10303B"}
 

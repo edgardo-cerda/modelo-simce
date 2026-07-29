@@ -313,7 +313,101 @@ dens_validacion <- dens_data %>%
   }) %>%
   ungroup()
 
+# ---- 4c. Distribución por Niveles de Aprendizaje (NUEVO) -------------
+# Traduce puntajes a las categorías que los colegios efectivamente usan
+# (Insuficiente / Elemental / Adecuado) y compara la distribución real
+# con la que predice el modelo. Es la lectura más directa de si la
+# predicción sirve para la pregunta "¿cuántos de mis estudiantes
+# quedarían en cada nivel?".
+#
+# ¡IMPORTANTE! Los puntajes de corte son fijados por la Agencia de
+# Calidad de la Educación en los Estándares de Aprendizaje, NO se
+# estiman de los datos. Los valores de abajo provienen de los documentos
+# oficiales del Mineduc:
+#
+#   4° básico Lectura     Elemental >= 241, Adecuado >= 284
+#   4° básico Matemática  Elemental >= 245, Adecuado >= 295
+#   2° medio  Lectura     Elemental >= 250, Adecuado >= 295
+#   2° medio  Matemática  Elemental >= 252, Adecuado >= 319
+#
+# Los tres primeros están verificados contra los Estándares publicados
+# en curriculumnacional.cl; el de 2° medio Matemática viene de una copia
+# del mismo documento y conviene confirmarlo antes de publicar cifras.
+# Además, los Estándares de 2° medio figuran como "no vigentes" en el
+# portal: si la Agencia actualizó los cortes para los años de estos
+# datos, hay que reemplazarlos acá. Un corte equivocado no rompe nada,
+# simplemente clasifica mal y en silencio.
+CORTES_NIVEL <- tribble(
+  ~grado, ~area,        ~corte_elemental, ~corte_adecuado,
+  "4b",   "lenguaje",   241,              284,
+  "4b",   "matematica", 245,              295,
+  "2m",   "lenguaje",   250,              295,
+  "2m",   "matematica", 252,              319
+)
+
+clasificar_nivel <- function(datos, columna_puntaje) {
+  datos %>%
+    left_join(CORTES_NIVEL, by = c("grado", "area")) %>%
+    mutate(
+      nivel = case_when(
+        is.na(corte_elemental) | is.na({{ columna_puntaje }}) ~ NA_character_,
+        {{ columna_puntaje }} >= corte_adecuado               ~ "Adecuado",
+        {{ columna_puntaje }} >= corte_elemental              ~ "Elemental",
+        TRUE                                                 ~ "Insuficiente"
+      ),
+      nivel = factor(nivel, levels = c("Insuficiente", "Elemental", "Adecuado"))
+    )
+}
+
+# Se usa el MISMO universo que el resto de la validación: sólo los
+# colegios que quedaron en `comp` (con predicción y con al menos
+# MIN_ALU_VALID alumnos observados). Comparar la distribución observada
+# de todos los colegios contra la predicha de un subconjunto mezclaría
+# el error del modelo con una diferencia de composición.
+colegios_validados <- comp %>% distinct(grado, area, rbd_revisado)
+
+niveles_obs <- obs %>%
+  inner_join(colegios_validados, by = c("grado", "area", "rbd_revisado")) %>%
+  clasificar_nivel(ptje) %>%
+  filter(!is.na(nivel)) %>%
+  count(grado, area, nivel, name = "n_obs") %>%
+  group_by(grado, area) %>%
+  mutate(pct_obs = n_obs / sum(n_obs)) %>%
+  ungroup()
+
+niveles_pred <- pred_individual %>%
+  inner_join(colegios_validados, by = c("grado", "area", "rbd_revisado")) %>%
+  clasificar_nivel(pred_B) %>%
+  filter(!is.na(nivel)) %>%
+  count(grado, area, nivel, name = "n_pred") %>%
+  group_by(grado, area) %>%
+  mutate(pct_pred = n_pred / sum(n_pred)) %>%
+  ungroup()
+
+niveles_logro <- niveles_obs %>%
+  full_join(niveles_pred, by = c("grado", "area", "nivel")) %>%
+  mutate(across(c(n_obs, n_pred), ~ replace_na(.x, 0L)),
+         across(c(pct_obs, pct_pred), ~ replace_na(.x, 0)),
+         dif_pp = 100 * (pct_pred - pct_obs)) %>%
+  arrange(grado, area, nivel)
+
+cat("DISTRIBUCIÓN POR NIVEL DE APRENDIZAJE (observada vs. predicha):\n")
+print(niveles_logro %>%
+        transmute(grado, area, nivel,
+                  `% real` = round(100 * pct_obs, 1),
+                  `% modelo` = round(100 * pct_pred, 1),
+                  `dif (pp)` = round(dif_pp, 1)))
+cat("\nError absoluto medio de la composición, en puntos porcentuales:\n")
+print(niveles_logro %>%
+        group_by(grado, area) %>%
+        summarise(error_pp = mean(abs(dif_pp)), .groups = "drop") %>%
+        mutate(error_pp = round(error_pp, 1)))
+cat("\nRecordatorio: los cortes son los oficiales de los Estándares de\n",
+    "Aprendizaje, no salen de estos datos. Ver el encabezado de esta sección.\n\n")
+
 # ---- 5. Guardar ------------------------------------------------------
+saveRDS(niveles_logro,   dir_salidas %>% file.path("niveles_logro.rds"))      # lo usa 05
+write_csv(niveles_logro, dir_salidas %>% file.path("validacion_niveles_logro.csv"))
 saveRDS(dens_validacion, dir_salidas %>% file.path("dens_validacion.rds"))   # lo usa 05
 saveRDS(comp %>% select(-starts_with("q_")),
         dir_salidas %>% file.path("validacion_por_colegio.rds"))             # lo usa 05
