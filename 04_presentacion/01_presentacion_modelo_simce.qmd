@@ -295,8 +295,6 @@ mostrar_grafico(
 
 - El archivo por alumno **reproduce los promedios oficiales por colegio** (diferencia mediana ~0,3 puntos; correlación 0,99): es el mismo universo, desagregado.
 - Los ensayos cubren **prácticamente el curso completo** (107–112% de quienes rinden SIMCE): no son una submuestra de "los que se preparan", lo que legitima comparar posiciones relativas entre ambas fuentes.
-- Se exige un mínimo de **15 alumnos** para usar la dispersión interna de un colegio: con menos, la desviación estándar muestral es demasiado ruidosa.
-
 
 ## Lo que los datos permiten — y lo que imponen
 
@@ -306,7 +304,7 @@ mostrar_grafico(
 [Oportunidades]{.tarjeta-titulo}
 
 - **SIMCE por alumno** → modelar cuán distintos son los estudiantes de un mismo colegio, y validar contra distribuciones reales.
-- **Forma empírica** de la distribución interna: miles de colegios observados, sin asumir normalidad.
+- **Forma empírica** de la distribución interna: miles de colegios observados.
 - **Universo nacional de contexto**: estimar el efecto de GSE, dependencia y ruralidad donde sí hay variación, y transferirlo.
 :::
 ::::
@@ -407,7 +405,6 @@ promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
 ```
 
 - Validación **out-of-time**: se entrena excluyendo el año más reciente y se evalúa contra él.
-- Se compara contra un baseline simple (el promedio histórico del grupo).
 
 ## Modelo de dispersión — el ancho del colegio
 
@@ -422,7 +419,6 @@ sd_simce ~ sd_entre_estud + iqr_logro_ensayo + sd_hist_colegio +
 
 - **Ponderada por número de alumnos**: la sd de un colegio de 20 alumnos es mucho más ruidosa que la de uno de 200.
 - La heterogeneidad histórica es el predictor más informativo (es persistente); los ensayos del año aportan la señal fresca; el nivel entra por el efecto piso/techo de la prueba.
-- Predicción acotada al rango observado en entrenamiento; respaldos en cascada para colegios sin modelo o sin historia.
 
 ## Predicción individual — matching por percentil
 
