@@ -117,6 +117,7 @@ for (i in seq_len(nrow(grupos))) {
     grado = g, area = a,
     n_train = nrow(train), n_test = nrow(test),
     sd_media_observada = mean(obs),
+    sd_media_predicha  = mean(pred),
     mae = mae_modelo,
     mae_baseline_constante = mae_baseline,
     mae_baseline_historico = mae_historico,

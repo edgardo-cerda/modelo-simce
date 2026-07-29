@@ -1142,20 +1142,49 @@ logro_por_evaluacion <- ensayos_dedup %>%
   filter(n_obs >= 30)
 
 # --- Evolución conjunta de ambas fuentes -------------------------------
-# En escalas distintas no son comparables, así que cada serie se
-# estandariza dentro de su grado x área: lo que interesa es si se mueven
-# juntas de un año a otro, no su nivel.
-z_seguro <- function(x) if (length(x) > 1 && sd(x) > 0) (x - mean(x)) / sd(x) else 0
+# Cada serie se calcula sobre la población que le corresponde:
+#
+#   - ENSAYOS: promedio de logro de todos los colegios que rindieron
+#     ensayo ese año.
+#   - SIMCE: promedio de los colegios que ESE AÑO están en la base de
+#     ensayos (o sea, los mismos colegios de la serie anterior que además
+#     tienen SIMCE publicado). Así las dos series hablan del mismo grupo
+#     de establecimientos y no del universo nacional.
+#
+# Las escalas son distintas (puntos vs. % de logro), así que cada serie se
+# estandariza dentro de su grado x área. La estandarización permite
+# comparar el MOVIMIENTO, no el nivel, y no corrige que la dificultad del
+# ensayo pueda cambiar de un año a otro.
+z_seguro <- function(x) {
+  if (sum(!is.na(x)) > 1 && sd(x, na.rm = TRUE) > 0) {
+    (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+  } else 0
+}
 
-evolucion_fuentes <- school_model_data %>%
+logro_anual <- school_features %>%
   group_by(agno, grado, area) %>%
-  summarise(n_colegios = n(),
-            simce = mean(promedio_simce, na.rm = TRUE),
+  summarise(n_colegios_ensayo = n(),
             logro = mean(mean_logro, na.rm = TRUE),
-            .groups = "drop") %>%
+            .groups = "drop")
+
+simce_anual <- school_model_data %>%
+  filter(!is.na(promedio_simce)) %>%
+  group_by(agno, grado, area) %>%
+  summarise(n_colegios_simce = n(),
+            simce = mean(promedio_simce),
+            .groups = "drop")
+
+evolucion_fuentes <- logro_anual %>%
+  full_join(simce_anual, by = c("agno", "grado", "area")) %>%
   group_by(grado, area) %>%
   mutate(z_simce = z_seguro(simce), z_logro = z_seguro(logro)) %>%
-  ungroup()
+  ungroup() %>%
+  arrange(grado, area, agno)
+
+cat("\nEvolución conjunta de ambas fuentes:\n")
+print(evolucion_fuentes %>%
+        mutate(across(c(simce, logro), ~round(.x, 1))) %>%
+        select(agno, grado, area, n_colegios_ensayo, logro, n_colegios_simce, simce))
 
 # --- SIMCE promedio por GSE --------------------------------------------
 # Sobre el universo nacional, que es donde hay variación en GSE.

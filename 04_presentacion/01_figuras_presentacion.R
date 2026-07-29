@@ -127,7 +127,13 @@ interactivo <- function(p, alto = ALTO_GRAFICO, leyenda = TRUE) {
     layout(
       margin = list(l = 55, r = 15, b = 45, t = 25),
       hoverlabel = list(bgcolor = "white", bordercolor = COL[["lago"]]),
-      legend = if (leyenda) list(orientation = "h", x = 0, y = -0.18) else list()
+      # Leyenda horizontal, centrada bajo el gráfico y sin título: el
+      # título repite lo que ya dice el eje o el propio color.
+      legend = if (leyenda) {
+        list(orientation = "h", x = 0.5, xanchor = "center",
+             y = -0.18, yanchor = "top",
+             title = list(text = ""))
+      } else list()
     )
   if (!leyenda) g <- g %>% layout(showlegend = FALSE)
   g
@@ -152,13 +158,12 @@ anio_test        <- leer_rds("anio_test.rds")                  # 02
 
 anio_test <- if (is.null(anio_test)) NA else anio_test
 
-# =============================================================
-# 2. TABLAS
-# =============================================================
+# 2. TABLAS ----
+
 cat("\nTablas:\n")
 tablas <- list()
 
-# --- 2.1 Descriptivos generales de los datos (lámina "Los datos en cifras")
+## --- 2.1 Descriptivos generales de los datos (lámina "Los datos en cifras") ----
 tablas$t_datos <- construir("t_datos", list(descriptivos), {
   ens <- descriptivos$desc_ensayos %>% filter(agno == max(agno))
   alu <- descriptivos$desc_simce_alu %>% filter(agno == max(agno))
@@ -182,19 +187,18 @@ tablas$t_datos <- construir("t_datos", list(descriptivos), {
     )
 })
 
-# --- 2.2 Resultados SIMCE: tamaño de la base por año
+## --- 2.2 Resultados SIMCE: tamaño de la base por año ----
 tablas$t_simce_anio <- construir("t_simce_anio", list(descriptivos), {
   descriptivos$desc_simce_anio %>%
     arrange(agno) %>%
     transmute(
       `Año` = agno,
       `Colegios` = format(n_colegios, big.mark = "."),
-      `Alumnos con puntaje` = format(n_alumnos, big.mark = "."),
-      `Puntajes (alumno × área)` = format(n_puntajes, big.mark = ".")
+      `Alumnos con puntaje` = format(n_alumnos, big.mark = ".")
     )
 })
 
-# --- 2.3 Ensayos Santillana: tamaño de la base por año
+## --- 2.3 Ensayos Santillana: tamaño de la base por año ----
 tablas$t_ensayos_anio <- construir("t_ensayos_anio", list(descriptivos), {
   descriptivos$desc_ensayos_anio %>%
     arrange(agno) %>%
@@ -207,53 +211,79 @@ tablas$t_ensayos_anio <- construir("t_ensayos_anio", list(descriptivos), {
     )
 })
 
-# --- 2.4 Descomposición de la varianza del SIMCE
+## --- 2.4 Descomposición de la varianza del SIMCE ----
 # Acompaña al gráfico del colegio de ejemplo: cuánta de la variación
 # total ocurre entre colegios y cuánta entre alumnos del mismo colegio.
 tablas$t_varianza <- construir("t_varianza", list(descriptivos), {
-  abrev_area <- c("matematica" = "Mate", "lenguaje" = "Leng")
+  abrev_area <- c("matematica" = "Matemática", "lenguaje" = "Lenguaje")
   descriptivos$varianza_simce %>%
     mutate(grado = factor(grado, levels = ORDEN_GRADO)) %>%
     arrange(grado, area) %>%
     transmute(
-      Grupo = paste0(grado, " · ", abrev_area[area]),
+      Grado = grado,
+      Area = abrev_area[area],
       `sd total` = round(sd_total, 1),
-      `entre` = round(sd_entre, 1),
-      `dentro` = round(sd_dentro, 1),
-      `% dentro` = paste0(round(100 * pct_dentro), "%")
+      `Entre colegios` = round(sd_entre, 1),
+      `Dentro de colegios` = round(sd_dentro, 1),
+      `% dentro de colegios` = paste0(round(100 * pct_dentro), "%")
     )
 })
 
 # --- 2.5 Validación del modelo de nivel
 tablas$t_nivel <- construir("t_nivel", list(met_nivel), {
-  met_nivel %>%
+  base <- met_nivel
+  # Los promedios del año de prueba los exporta 02; si se está leyendo
+  # una salida anterior, se reconstruyen desde el diagnóstico.
+  faltan <- !all(c("media_pred_test", "media_obs_test") %in% names(base))
+  if (faltan && !is.null(diag_nivel)) {
+    medias <- diag_nivel %>%
+      group_by(grado, area) %>%
+      summarise(media_pred_test = mean(predicho, na.rm = TRUE),
+                media_obs_test  = mean(observado, na.rm = TRUE),
+                .groups = "drop")
+    base <- base %>% left_join(medias, by = c("grado", "area"))
+  } else if (faltan) {
+    base$media_pred_test <- NA_real_
+    base$media_obs_test  <- NA_real_
+  }
+
+  base %>%
     etiquetar() %>%
     arrange(grado, area) %>%
     transmute(
       Grado = grado, Área = area,
       `Colegios (prueba)` = n_test,
+      `SIMCE predicho (promedio)` = round(media_pred_test, 1),
+      `SIMCE real (promedio)` = round(media_obs_test, 1),
       `MAE modelo` = round(mae, 1),
-      `MAE baseline` = round(mae_baseline, 1),
-      `Mejora` = paste0(round(mejora_vs_baseline_pct), "%"),
-      `R² (prueba)` = round(r2_test, 2),
-      `MAE sin historia` = round(mae_sin_historia, 1),
-      `MAE con historia` = round(mae_con_historia, 1)
+      `R² (prueba)` = round(r2_test, 2)
     )
 })
 
 # --- 2.6 Validación del modelo de dispersión
 tablas$t_dispersion <- construir("t_dispersion", list(met_dispersion), {
-  met_dispersion %>%
+  base <- met_dispersion
+  faltan <- !"sd_media_predicha" %in% names(base)
+  if (faltan && !is.null(diag_dispersion)) {
+    medias <- diag_dispersion %>%
+      group_by(grado, area) %>%
+      summarise(sd_media_predicha = mean(sd_predicha, na.rm = TRUE),
+                .groups = "drop")
+    base <- base %>% left_join(medias, by = c("grado", "area"))
+  } else if (faltan) {
+    base$sd_media_predicha <- NA_real_
+  }
+
+  base %>%
     etiquetar() %>%
     arrange(grado, area) %>%
     transmute(
       Grado = grado, Área = area,
-      `sd interna observada` = round(sd_media_observada, 1),
+      `Colegios (prueba)` = n_test,
+      `sd predicha` = round(sd_media_predicha, 1),
+      `sd observada` = round(sd_media_observada, 1),
       `MAE modelo` = round(mae, 2),
-      `Baseline: misma sd` = round(mae_baseline_constante, 2),
-      `Baseline: su historia` = round(mae_baseline_historico, 2),
-      `R² (prueba)` = round(r2_test, 2),
-      `Error / ancho` = paste0(round(100 * mae / sd_media_observada), "%")
+      `R² (prueba)` = round(r2_test, 2)
     )
 })
 
@@ -312,9 +342,7 @@ tablas$t_coherencia <- construir("t_coherencia", list(coherencia), {
     )
 })
 
-# =============================================================
-# 3. GRÁFICOS
-# =============================================================
+# 3. GRÁFICOS ----
 cat("\nGráficos:\n")
 gg <- list()   # versiones ggplot (estáticas)
 
@@ -334,27 +362,71 @@ gg$g_densidad_simce <- construir("g_densidad_simce", list(descriptivos), {
     tema_pres
 })
 
-# --- 3.2 Relación básica: logro en los ensayos vs. SIMCE del colegio
-gg$g_ensayo_vs_simce <- construir("g_ensayo_vs_simce", list(school_model), {
-  school_model %>%
-    filter(!is.na(promedio_simce), !is.na(mean_logro)) %>%
+# --- 3.2 SIMCE promedio por año (acompaña a la tabla de la lámina 9)
+gg$g_simce_por_anio <- construir("g_simce_por_anio", list(descriptivos), {
+  descriptivos$desc_simce_alu %>%
     etiquetar() %>%
-    mutate(text = paste0("RBD ", rbd_revisado,
+    mutate(text = paste0(grado, " · ", area,
                          "<br>Año: ", agno,
-                         "<br>GSE: ", coalesce(gse_etiqueta, "sin dato"),
-                         "<br>Logro ensayo: ", round(mean_logro, 1), "%",
-                         "<br>SIMCE: ", round(promedio_simce, 1))) %>%
-    ggplot(aes(mean_logro, promedio_simce, text = text)) +
-    geom_point(alpha = 0.45, colour = COL[["lago"]], size = 1.3) +
-    # línea de tendencia (mínimos cuadrados) por grado x área
-    geom_smooth(method = "lm", se = FALSE, colour = COL[["coral"]],
-                linewidth = 1, formula = y ~ x) +
+                         "<br>SIMCE promedio: ", round(ptje_medio, 1),
+                         "<br>Alumnos: ", format(n_alumnos, big.mark = "."))) %>%
+    ggplot(aes(agno, ptje_medio, colour = area, group = interaction(grado, area),
+               text = text, shape = grado,
+               linetype = grado)) +
+    geom_line(linewidth = 0.9) +
+    geom_point(size = 1.8) +
+    # facet_wrap(~ grado) +
+    scale_x_continuous(breaks = function(x) seq(floor(min(x)), ceiling(max(x)), by = 1)) +
+    scale_y_continuous(limits = c(225, 300)) +
+    scale_colour_manual(values = c("Matemática" = COL[["lago"]],
+                                   "Lenguaje"   = COL[["marigold"]])) +
+    labs(x = NULL, y = "SIMCE promedio") +
+    tema_pres
+})
+
+# --- 3.3 Relación básica: logro en los ensayos vs. SIMCE del colegio
+gg$g_ensayo_vs_simce <- construir("g_ensayo_vs_simce", list(school_model), {
+  datos <- school_model %>%
+    filter(!is.na(promedio_simce), !is.na(mean_logro)) %>%
+    etiquetar()
+
+  # La recta se calcula acá y se dibuja como geom_line, en vez de dejarla
+  # en manos de geom_smooth: ggplotly no siempre traslada la capa de
+  # suavizado, y así además se puede mostrar la pendiente y el R² en el
+  # tooltip de la propia línea.
+  tendencia <- datos %>%
+    group_by(grado, area) %>%
+    group_modify(function(.x, .y) {
+      m  <- lm(promedio_simce ~ mean_logro, data = .x)
+      xs <- seq(min(.x$mean_logro), max(.x$mean_logro), length.out = 50)
+      tibble(
+        mean_logro = xs,
+        promedio_simce = predict(m, newdata = tibble(mean_logro = xs)),
+        pendiente = coef(m)[2],
+        r2 = summary(m)$r.squared
+      )
+    }) %>%
+    ungroup() %>%
+    mutate(text = paste0("Tendencia ", grado, " · ", area,
+                         "<br>+1 punto de logro = ", round(pendiente, 2),
+                         " puntos SIMCE",
+                         "<br>R²: ", round(r2, 2)))
+
+  ggplot(datos, aes(mean_logro, promedio_simce)) +
+    geom_point(aes(text = paste0("RBD ", rbd_revisado,
+                                 "<br>Año: ", agno,
+                                 "<br>GSE: ", coalesce(gse_etiqueta, "sin dato"),
+                                 "<br>Logro ensayo: ", round(mean_logro, 1), "%",
+                                 "<br>SIMCE: ", round(promedio_simce, 1))),
+               alpha = 0.4, colour = COL[["lago"]], size = 1.3) +
+    geom_line(data = tendencia, aes(text = text),
+              colour = COL[["coral"]], linewidth = 1.1) +
     facet_grid(area ~ grado) +
     labs(x = "Logro medio en los ensayos (%)", y = "SIMCE promedio del colegio") +
     tema_pres
-}) 
+})
 
-# --- 3.3 Un colegio por dentro: dispersión intra-colegio
+# --- 3.4 Un colegio por dentro: dispersión intra-colegio
 # El histograma es la distribución real de un colegio concreto (el de más
 # alumnos del grupo); la curva es la distribución nacional del mismo
 # grado y área. La distancia entre ambas medias es variación ENTRE
@@ -380,7 +452,7 @@ gg$g_colegio_ejemplo <- construir("g_colegio_ejemplo", list(descriptivos), {
     tema_pres
 })
 
-# --- 3.4 Ensayos: distribución del logro
+# --- 3.5 Ensayos: distribución del logro
 gg$g_densidad_logro <- construir("g_densidad_logro", list(descriptivos), {
   descriptivos$dens_logro_ensayo %>%
     etiquetar() %>%
@@ -396,7 +468,7 @@ gg$g_densidad_logro <- construir("g_densidad_logro", list(descriptivos), {
     tema_pres
 })
 
-# --- 3.5 Ensayos: logro medio según número de evaluación
+# --- 3.6 Ensayos: logro medio según número de evaluación
 gg$g_logro_por_evaluacion <- construir("g_logro_por_evaluacion", list(descriptivos), {
   descriptivos$logro_por_evaluacion %>%
     etiquetar() %>%
@@ -415,29 +487,37 @@ gg$g_logro_por_evaluacion <- construir("g_logro_por_evaluacion", list(descriptiv
     tema_pres
 })
 
-# --- 3.6 Evolución conjunta de ambas fuentes (estandarizadas)
+# --- 3.7 Evolución conjunta de ambas fuentes (estandarizadas)
 gg$g_evolucion_estandarizada <- construir("g_evolucion_estandarizada", list(descriptivos), {
   descriptivos$evolucion_fuentes %>%
     etiquetar() %>%
     pivot_longer(c(z_simce, z_logro), names_to = "serie", values_to = "z") %>%
     mutate(
       serie = recode(serie, z_simce = "SIMCE", z_logro = "Ensayos"),
+      valor  = ifelse(serie == "SIMCE", round(simce, 1), round(logro, 1)),
+      unidad = ifelse(serie == "SIMCE", " puntos", "% de logro"),
+      colegios = ifelse(serie == "SIMCE", n_colegios_simce, n_colegios_ensayo),
       text  = paste0(serie, " · ", grado, " · ", area,
                      "<br>Año: ", agno,
-                     "<br>Estandarizado: ", round(z, 2))
+                     "<br>Valor: ", valor, unidad,
+                     "<br>Estandarizado: ", round(z, 2),
+                     "<br>Colegios: ", colegios)
     ) %>%
     ggplot(aes(agno, z, colour = serie, group = serie, text = text)) +
     geom_hline(yintercept = 0, colour = "#C9D3D2", linewidth = 0.4) +
     geom_line(linewidth = 0.9) +
     geom_point(size = 1.6) +
     facet_grid(area ~ grado) +
+    # los años son enteros: sin esto el eje muestra 2022.5, 2023.0, ...
+    scale_x_continuous(breaks = function(x) seq(floor(min(x)), ceiling(max(x)), by = 1)) +
+    scale_y_continuous(limits = c(-2, 2)) +
     scale_colour_manual(values = c("SIMCE" = COL[["tinta"]],
                                    "Ensayos" = COL[["marigold"]])) +
     labs(x = NULL, y = "Desviaciones respecto del promedio del grupo") +
     tema_pres
 })
 
-# --- 3.7 SIMCE promedio por GSE
+# --- 3.8 SIMCE promedio por GSE
 gg$g_simce_por_gse <- construir("g_simce_por_gse", list(descriptivos), {
   descriptivos$simce_por_gse %>%
     etiquetar() %>%
@@ -454,7 +534,7 @@ gg$g_simce_por_gse <- construir("g_simce_por_gse", list(descriptivos), {
     tema_pres
 })
 
-# --- 3.8 Composición de la base con ensayo vs. universo nacional
+# --- 3.9 Composición de la base con ensayo vs. universo nacional
 gg$g_composicion_gse <- construir("g_composicion_gse", list(descriptivos), {
   descriptivos$comp_gse %>%
     etiquetar() %>%
@@ -475,7 +555,7 @@ gg$g_composicion_gse <- construir("g_composicion_gse", list(descriptivos), {
     tema_pres
 })
 
-# --- 3.9 Plantilla de forma de la distribución interna
+# --- 3.10 Plantilla de forma de la distribución interna
 # Compara la forma empírica (por tercil de nivel) con la normal, que es
 # lo que se asumiría sin estos datos.
 gg$g_forma_z <- construir("g_forma_z", list(forma_z), {
@@ -505,13 +585,19 @@ gg$g_forma_z <- construir("g_forma_z", list(forma_z), {
     tema_pres
 })
 
-# --- 3.10 Nivel: observado vs. predicho en el año de prueba
+# --- 3.11 Nivel: observado vs. predicho en el año de prueba
 gg$g_obs_pred_nivel <- construir("g_obs_pred_nivel", list(diag_nivel), {
-  diag_nivel %>%
-    etiquetar() %>%
+  d <- diag_nivel %>% etiquetar()
+  # Compatibilidad con salidas de 02 anteriores, que no traían mean_logro.
+  if (!"mean_logro" %in% names(d)) d$mean_logro <- NA_real_
+
+  d %>%
     mutate(text = paste0("RBD ", rbd_revisado,
                          "<br>GSE: ", coalesce(gse_etiqueta, "sin dato"),
                          "<br>Años de historia: ", n_anios_hist,
+                         "<br>Logro medio en ensayos: ",
+                         ifelse(is.na(mean_logro), "sin dato",
+                                paste0(round(mean_logro, 1), "%")),
                          "<br>Observado: ", round(observado, 1),
                          "<br>Predicho: ", round(predicho, 1),
                          "<br>Error: ", round(predicho - observado, 1))) %>%
@@ -524,7 +610,7 @@ gg$g_obs_pred_nivel <- construir("g_obs_pred_nivel", list(diag_nivel), {
     tema_pres
 })
 
-# --- 3.11 Dispersión: sd interna observada vs. predicha
+# --- 3.12 Dispersión: sd interna observada vs. predicha
 gg$g_obs_pred_sd <- construir("g_obs_pred_sd", list(diag_dispersion), {
   diag_dispersion %>%
     etiquetar() %>%
@@ -542,7 +628,7 @@ gg$g_obs_pred_sd <- construir("g_obs_pred_sd", list(diag_dispersion), {
     tema_pres
 })
 
-# --- 3.12 Distribución individual: predicha vs. observada
+# --- 3.13 Distribución individual: predicha vs. observada
 gg$g_densidad_validacion <- construir("g_densidad_validacion", list(dens_validacion), {
   dens_validacion %>%
     filter(fuente %in% c("Observado", "Predicción (versión B)")) %>%
@@ -557,7 +643,7 @@ gg$g_densidad_validacion <- construir("g_densidad_validacion", list(dens_validac
     tema_pres
 })
 
-# --- 3.13 Error de cuantiles por colegio: distribución y estratos
+# --- 3.14 Error de cuantiles por colegio: distribución y estratos
 gg$g_error_por_colegio <- construir("g_error_por_colegio", list(val_colegio), {
   val_colegio %>%
     etiquetar() %>%
@@ -588,7 +674,7 @@ gg$g_qmae_estrato <- construir("g_qmae_estrato", list(val_estrato), {
     tema_pres
 })
 
-# ---- 4. Versión interactiva de cada gráfico -------------------------
+# 4. Versión interactiva de cada gráfico -------------------------
 graficos <- imap(compact(gg), function(p, nombre) {
   tryCatch(
     interactivo(p, leyenda = nombre %in% c("g_densidad_simce", "g_composicion_gse",
@@ -596,9 +682,12 @@ graficos <- imap(compact(gg), function(p, nombre) {
                                            "g_qmae_estrato", "g_densidad_logro",
                                            "g_logro_por_evaluacion",
                                            "g_evolucion_estandarizada",
-                                           "g_simce_por_gse"),
+                                           "g_simce_por_gse", "g_simce_por_anio"),
                 # el colegio de ejemplo va junto a una tabla: más bajo
-                alto = if (nombre == "g_colegio_ejemplo") 380 else ALTO_GRAFICO),
+                # los que comparten lámina con una tabla van más bajos
+                alto = if (nombre %in% c("g_colegio_ejemplo", "g_simce_por_anio")) {
+                  330
+                } else ALTO_GRAFICO),
     error = function(e) {
       cat("  - ", nombre, ": no se pudo convertir a plotly (", conditionMessage(e),
           "); queda sólo la versión estática\n", sep = "")
