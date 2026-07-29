@@ -321,6 +321,20 @@ $curvas: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewB
   &.t-ok     { border-top: 6px solid $lago; }
 }
 
+// ---------- salidas de chunks (gráficos y tablas) ----------
+// Ningún widget debe sobresalir de la lámina: si por lo que sea se
+// dibuja más ancho, se recorta acá en vez de empujar la diapositiva.
+.reveal .cell,
+.reveal .cell-output-display {
+  max-width: 100%;
+  overflow: hidden;
+}
+.reveal .html-widget,
+.reveal .plotly {
+  max-width: 100% !important;
+  margin: 0 auto;
+}
+
 // ---------- tablas ----------
 .reveal table {
   font-size: .62em;

@@ -158,13 +158,12 @@ anio_test        <- leer_rds("anio_test.rds")                  # 02
 
 anio_test <- if (is.null(anio_test)) NA else anio_test
 
-# =============================================================
-# 2. TABLAS
-# =============================================================
+# 2. TABLAS ----
+
 cat("\nTablas:\n")
 tablas <- list()
 
-# --- 2.1 Descriptivos generales de los datos (lámina "Los datos en cifras")
+## --- 2.1 Descriptivos generales de los datos (lámina "Los datos en cifras") ----
 tablas$t_datos <- construir("t_datos", list(descriptivos), {
   ens <- descriptivos$desc_ensayos %>% filter(agno == max(agno))
   alu <- descriptivos$desc_simce_alu %>% filter(agno == max(agno))
@@ -188,7 +187,7 @@ tablas$t_datos <- construir("t_datos", list(descriptivos), {
     )
 })
 
-# --- 2.2 Resultados SIMCE: tamaño de la base por año
+## --- 2.2 Resultados SIMCE: tamaño de la base por año ----
 tablas$t_simce_anio <- construir("t_simce_anio", list(descriptivos), {
   descriptivos$desc_simce_anio %>%
     arrange(agno) %>%
@@ -199,7 +198,7 @@ tablas$t_simce_anio <- construir("t_simce_anio", list(descriptivos), {
     )
 })
 
-# --- 2.3 Ensayos Santillana: tamaño de la base por año
+## --- 2.3 Ensayos Santillana: tamaño de la base por año ----
 tablas$t_ensayos_anio <- construir("t_ensayos_anio", list(descriptivos), {
   descriptivos$desc_ensayos_anio %>%
     arrange(agno) %>%
@@ -212,7 +211,7 @@ tablas$t_ensayos_anio <- construir("t_ensayos_anio", list(descriptivos), {
     )
 })
 
-# --- 2.4 Descomposición de la varianza del SIMCE
+## --- 2.4 Descomposición de la varianza del SIMCE ----
 # Acompaña al gráfico del colegio de ejemplo: cuánta de la variación
 # total ocurre entre colegios y cuánta entre alumnos del mismo colegio.
 tablas$t_varianza <- construir("t_varianza", list(descriptivos), {
@@ -343,9 +342,7 @@ tablas$t_coherencia <- construir("t_coherencia", list(coherencia), {
     )
 })
 
-# =============================================================
-# 3. GRÁFICOS
-# =============================================================
+# 3. GRÁFICOS ----
 cat("\nGráficos:\n")
 gg <- list()   # versiones ggplot (estáticas)
 
@@ -373,11 +370,14 @@ gg$g_simce_por_anio <- construir("g_simce_por_anio", list(descriptivos), {
                          "<br>Año: ", agno,
                          "<br>SIMCE promedio: ", round(ptje_medio, 1),
                          "<br>Alumnos: ", format(n_alumnos, big.mark = "."))) %>%
-    ggplot(aes(agno, ptje_medio, colour = area, group = area, text = text)) +
+    ggplot(aes(agno, ptje_medio, colour = area, group = interaction(grado, area),
+               text = text, shape = grado,
+               linetype = grado)) +
     geom_line(linewidth = 0.9) +
     geom_point(size = 1.8) +
-    facet_wrap(~ grado) +
+    # facet_wrap(~ grado) +
     scale_x_continuous(breaks = function(x) seq(floor(min(x)), ceiling(max(x)), by = 1)) +
+    scale_y_continuous(limits = c(225, 300)) +
     scale_colour_manual(values = c("Matemática" = COL[["lago"]],
                                    "Lenguaje"   = COL[["marigold"]])) +
     labs(x = NULL, y = "SIMCE promedio") +
@@ -674,7 +674,7 @@ gg$g_qmae_estrato <- construir("g_qmae_estrato", list(val_estrato), {
     tema_pres
 })
 
-# ---- 4. Versión interactiva de cada gráfico -------------------------
+# 4. Versión interactiva de cada gráfico -------------------------
 graficos <- imap(compact(gg), function(p, nombre) {
   tryCatch(
     interactivo(p, leyenda = nombre %in% c("g_densidad_simce", "g_composicion_gse",

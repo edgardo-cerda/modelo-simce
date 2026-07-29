@@ -16,6 +16,10 @@ format:
     footer: "Modelo de predicción SIMCE"
     title-slide-attributes:
       data-background-color: "#10303B"
+    # Reajusta los gráficos de plotly al ancho real de cada lámina cuando
+    # ésta se muestra. Sin esto quedan con el ancho que midieron al
+    # dibujarse (con la lámina oculta) y se salen de la diapositiva.
+    include-after-body: ajustar_graficos.html
 execute:
   echo: false
   warning: false
@@ -100,7 +104,7 @@ Para esto contamos con:
 
 - El ensayo y el SIMCE son **instrumentos distintos**, en escalas distintas, y cambiantes en el tiempo.
 - Lo que se observa es **señal más ruido**. Un estudiante puede tener un mal día, apurarse al final, adivinar; y cada ensayo tiene su propia dificultad.
-- El SIMCE **no publica identificadores individuales**, por lo que no es posible saber cómo el fue en el SIMCE a cada estudiante.
+- El SIMCE **no publica identificadores individuales**, por lo que no es posible saber cómo el fue en el SIMCE a cada estudiante específico.
 - Los estudiantes de un mismo colegio son **muy distintos entre sí**: predecirle a todos el promedio del colegio ignora la parte más informativa del resultado.
 - La predicción debería funcionar también en colegios **nuevos o con poca historia**.
 
@@ -110,6 +114,7 @@ Para esto contamos con:
 
 - Una fórmula lineal trata el logro observado como si fuera exacto, así que se **traslada todo el ruido al puntaje predicho** y exagera los extremos. Al estudiante que sacó mucho por suerte le proyecta un puntaje alto.
 - **La equivalencia no es constante.** Cambia por grado, área y año.
+- La distribución de los resultados puede **cambiar de colegio a colegio**
 - **El ensayo no es lo único que informa.** La historia y el contexto del colegio también mueven el resultado.
 
 
@@ -125,6 +130,18 @@ Para esto contamos con:
 - **SIMCE por alumno:**  El puntaje que obtuvo cada estudiante que rindió la prueba, con el error de medición del instrumento 
 - **Ensayos Santillana:** Pruebas de práctica que los colegios aplican durante el año, en el mismo formato del SIMCE. Cada estudiante rinde entre 1 y 6, en lenguaje y matemática 
 - **Contexto del colegio:** Caracterización del establecimiento que publica la Agencia junto con los resultados: nivel socioeconómico de las familias, quién administra el colegio y si es urbano o rural 
+
+
+## Criterios de limpieza aplicados
+
+Antes de construir el modelo, los datos pasan por un proceso de limpieza que corrige errores conocidos y dimensiona su magnitud.
+
+::: incremental
+- **`porcentaje_logro` fuera de `[0, 100]`** (ensayos Santillana): matemáticamente imposible -> se recodifica como dato faltante.
+- **Colegios sin RBD**: ensayos de colegios que no pudieron vincularse a un establecimiento oficial (RBD) del sistema SIMCE -> quedan fuera de los cruces SIMCE-Ensayo hasta ser identificados.
+- **Duplicados**: mismo estudiante/colegio con más de un registro para la misma evaluación → se conserva un único registro.
+- **Outliers estadísticos**: se marcan (no se eliminan) con dos métodos complementarios — rango intercuartílico (IQR) y detección multivariada (Isolation Forest)
+:::
 
 
 ## Resultados SIMCE
@@ -155,6 +172,8 @@ mostrar_grafico(
 
 ::::
 :::::
+
+- Los resultados SIMCE (de 4b y/o 2m) previos a 2022 son de 2018: no se utilizan por pérdida de continuidad en la serie.
 
 ## Cómo se distribuyen los puntajes
 
@@ -193,6 +212,9 @@ mostrar_tabla(
   "Número de colegios, de alumnos distintos y de ensayos rendidos por año, con el promedio de ensayos que rinde cada alumno en cada área.",
   "01_preparar_datos.R -> descriptivos.rds")
 ```
+
+- El número de colegios que cuentan con Ensayos Santillana ha aumentado cada año (se asume que seguirá aumentando)
+- También ha aumentado el número de ensayos que rinde cada estudiante a lo largo del año.
 
 ## Cómo se distribuye el logro en los ensayos
 
@@ -303,15 +325,6 @@ mostrar_grafico(
 
 [SECCIÓN 3 · CÓMO LO ABORDAMOS]{.eyebrow}
 
-## La estrategia de estimación
-
-[Cómo se aborda el problema]{.eyebrow}
-
-- **Un modelo por grado × área.** La relación entre ensayo y SIMCE no es la misma en 4° básico que en 2° medio, ni en lenguaje que en matemática.
-- **Modelos lineales y mixtos.** Regresión para el nivel y el ancho; modelos mixtos donde hace falta encoger estimaciones ruidosas hacia un promedio razonable.
-- **Sólo información disponible al predecir.** Ventana expansiva en todo lo histórico y contexto del colegio rezagado.
-- **Validación out-of-time**, siempre contra baselines simples.
-
 ## La estructura general
 
 [Tres piezas, cada una estimada donde hay evidencia]{.eyebrow}
@@ -342,7 +355,19 @@ El lugar del estudiante **dentro de su propio colegio**, la única fuente indivi
 
 $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{colegio}} \cdot Q(\text{percentil}_i)$$
 
-## Features a nivel de estudiante
+- Se utiliza información a nivel de estudiante y a nivel de colegio
+
+## La estrategia de estimación
+
+[Cómo se aborda el problema]{.eyebrow}
+
+- **Un modelo por grado × área.** La relación entre ensayo y SIMCE no es la misma en 4° básico que en 2° medio, ni en lenguaje que en matemática.
+- **Modelos lineales y mixtos.** Regresión para el nivel y el ancho; modelos mixtos donde hace falta encoger estimaciones ruidosas hacia un promedio razonable.
+- **Sólo información disponible al predecir.** Ventana expansiva en todo lo histórico y contexto del colegio rezagado.
+- **Validación out-of-time**, siempre contra baselines simples.
+
+
+## Características a nivel de estudiante
 
 [La materia prima individual]{.eyebrow}
 
@@ -355,11 +380,11 @@ Por año × grado × área:
 
 El índice de ordenamiento ya viene *encogido* por el modelo mixto: un estudiante con un solo ensayo queda cerca del promedio de su colegio en vez de irse a un extremo por ruido.
 
-## Features a nivel de colegio
+## Características a nivel de colegio
 
 [Nivel, historia y contexto]{.eyebrow}
 
-- Variables de ensayo agregadas, más features de **dispersión**: heterogeneidad de los ensayos este año (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad histórica (`sd_hist_colegio`).
+- Variables de ensayo agregadas, más características de **dispersión**: heterogeneidad de los ensayos este año (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad histórica (`sd_hist_colegio`).
 - `colegio_efecto_historico`: nivel persistente del colegio, estimado sobre el **universo nacional** de años anteriores:
 
 ```
@@ -484,6 +509,10 @@ Sin vínculo alumno-a-alumno, la pregunta es: ¿el **conjunto** de predicciones 
 
 **Métrica principal — error de cuantiles:** se comparan los percentiles 5, 10, …, 95 de las predicciones contra los observados en cada colegio y se promedia el error absoluto (distancia de Wasserstein-1 discretizada). Captura errores de nivel, ancho y forma en un solo número.
 
+## Validación de la predicción individual
+
+[Validación distribucional]{.eyebrow}
+
 ```{r}
 #| fig-align: center
 mostrar_tabla(
@@ -524,6 +553,17 @@ mostrar_grafico(
 - **La forma de la distribución es una plantilla nacional**, no la del propio colegio. Con más años acumulados podría usarse la forma histórica de cada colegio.
 - **La pendiente de mejora se estima por colegio, no por estudiante** (muchos rinden un solo ensayo).
 - **El error remanente está sobre todo en el modelo de colegio** (media y ancho), no en el reparto hacia los estudiantes: ahí conviene invertir la próxima iteración.
+
+
+## Pendientes y siguientes hitos {.smaller}
+
+::: incremental
+- [ ] Completar la recuperación de RBD para los colegios pendientes de revisión manual
+- [ ] Ajustar/probar nuevas especificaciones o variables predictoras
+- [ ] Incorporar ajuste psicométrico a puntajes de logros
+- [ ] Validar el modelo con un nuevo lote de ensayos
+- [ ] Definir el formato final de entrega de las predicciones al cliente (ej. dashboard, reporte mensual)
+:::
 
 
 ## Síntesis {background-color="#10303B" .cierre}
