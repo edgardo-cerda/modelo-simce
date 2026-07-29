@@ -353,8 +353,6 @@ El lugar del estudiante **dentro de su propio colegio**, la única fuente indivi
 
 $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{colegio}} \cdot Q(\text{percentil}_i)$$
 
-- Se utiliza información a nivel de estudiante y a nivel de colegio
-
 ## La estrategia de estimación
 
 [Cómo se aborda el problema]{.eyebrow}
@@ -364,35 +362,6 @@ $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{co
 - **Sólo información disponible al predecir.** Ventana expansiva en todo lo histórico y contexto del colegio rezagado.
 - **Validación out-of-time**, siempre contra baselines simples.
 
-
-## Características a nivel de estudiante
-
-[La materia prima individual]{.eyebrow}
-
-Por año × grado × área:
-
-- `mean_logro`: promedio de logro en los ensayos del año.
-- `pred_final_logro` y `slope_logro`: nivel proyectado y pendiente de mejora, de un **modelo mixto de crecimiento** que estabiliza a quienes rinden pocos ensayos.
-- `n_evals`: cuántos ensayos rindió.
-- `pct_ensayo`: **percentil del estudiante dentro de su propio colegio** — la pieza que alimenta la predicción individual.
-
-El índice de ordenamiento ya viene *encogido* por el modelo mixto: un estudiante con un solo ensayo queda cerca del promedio de su colegio en vez de irse a un extremo por ruido.
-
-## Características a nivel de colegio
-
-[Nivel, historia y contexto]{.eyebrow}
-
-- Variables de ensayo agregadas, más características de **dispersión**: heterogeneidad de los ensayos este año (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad histórica (`sd_hist_colegio`).
-- `colegio_efecto_historico`: nivel persistente del colegio, estimado sobre el **universo nacional** de años anteriores:
-
-```
-promedio_simce ~ año + GSE + dependencia + ruralidad + (1 | colegio)
-colegio_efecto_historico = expectativa_contextual + desvío_propio
-```
-
-- Un colegio **sin historia** recibe lo esperado para su contexto; uno con **historia larga** queda dominado por su propia evidencia.
-- Todo lo histórico usa **ventana expansiva**: solo años anteriores al que se predice.
-
 ## Modelo de nivel — la media del colegio
 
 [Pieza 1 de 3]{.eyebrow}
@@ -401,10 +370,39 @@ Una regresión lineal por grado × área:
 
 ```
 promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
-                 n_evals_prom + colegio_efecto_historico
+                 n_evals + colegio_efecto_historico
 ```
 
+- Se utiliza información a nivel de estudiante y a nivel de colegio
+
 - Validación **out-of-time**: se entrena excluyendo el año más reciente y se evalúa contra él.
+
+
+## Variables del modelo de nivel
+
+[La materia prima a nivel individual]{.eyebrow}
+
+Por año × grado × área:
+
+- `mean_logro`: promedio de logro en los ensayos del año.
+- `pred_final_logro` y `slope_logro`: nivel proyectado y pendiente de mejora, de un **modelo mixto de crecimiento** que estabiliza a quienes rinden pocos ensayos.
+- `n_evals`: cuántos ensayos rindió.
+
+## Variables del modelo de nivel (cont)
+
+[La materia prima a nivel colegio]{.eyebrow}
+
+Por año × grado × área:
+
+- `colegio_efecto_historico`: nivel persistente del colegio, estimado sobre el **universo nacional** de años anteriores:
+
+```
+promedio_simce ~ año + GSE + dependencia + ruralidad + (1 | colegio)
+```
+
+- Un colegio **sin historia** recibe lo esperado para su contexto; uno con **historia larga** queda dominado por su propia evidencia.
+- Todo lo histórico usa **ventana expansiva**: solo años anteriores al que se predice.
+
 
 ## Modelo de dispersión — el ancho del colegio
 
@@ -417,8 +415,9 @@ sd_simce ~ sd_entre_estud + iqr_logro_ensayo + sd_hist_colegio +
            mean_logro + colegio_efecto_historico
 ```
 
+- Variables de ensayo agregadas, más características de **dispersión**: heterogeneidad de los ensayos este año (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad histórica (`sd_hist_colegio`).
 - **Ponderada por número de alumnos**: la sd de un colegio de 20 alumnos es mucho más ruidosa que la de uno de 200.
-- La heterogeneidad histórica es el predictor más informativo (es persistente); los ensayos del año aportan la señal fresca; el nivel entra por el efecto piso/techo de la prueba.
+
 
 ## Predicción individual — matching por percentil
 
@@ -427,19 +426,13 @@ sd_simce ~ sd_entre_estud + iqr_logro_ensayo + sd_hist_colegio +
 $$\text{pred}_i = \hat{\mu}_{\text{colegio}} + \hat{\sigma}_{\text{colegio}} \cdot Q(\text{pct}_i)$$
 
 - $Q$ es la **forma empírica** de la distribución interna, calculada sobre miles de colegios reales: se estandariza dentro de cada colegio y se guarda la función de cuantiles, por grado, área y **tercil de nivel** (los colegios de bajo nivel tienen la cola derecha algo más larga, y viceversa).
+
 - A cada estudiante se le asigna el puntaje que corresponde a **su percentil** dentro de la distribución predicha de su colegio.
 - Por construcción, el conjunto de predicciones de un colegio **reproduce la distribución completa** que debería tener: media, ancho, forma y colas.
 
+## Supuestos del modelo de asignación individual
 
-## ¿Qué preguntas responde?
-
-[El modelo, leído desde el usuario]{.eyebrow}
-
-Es la versión apropiada para preguntas **sobre el grupo**:
-
-- "¿Cómo se va a ver la distribución de mi curso?"
-- "¿Cuántos estudiantes quedarían en nivel insuficiente?"
-- "¿Quiénes están en la cola de riesgo?"
+[Supuestos de ranking]{.eyebrow}
 
 Supuesto explícito: el **ranking** de los ensayos dentro del colegio se parece al ranking en el SIMCE. Por eso cada predicción individual debe leerse como una **posición esperada dentro del curso**, no como un puntaje garantizado.
 
