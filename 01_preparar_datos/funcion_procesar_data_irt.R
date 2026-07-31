@@ -1,9 +1,9 @@
 
 # #Funciones ----
-# source("funciones/funciones_proyecto_simce.R")
-# rutas <- generar_ruta()
-# ruta_data_in <- rutas$ruta_data_in
-# ruta_data_intermedia <- rutas$ruta_data_intermedia
+source("funciones/funciones_proyecto_simce.R")
+rutas <- generar_ruta()
+ruta_data_in <- rutas$ruta_data_in
+ruta_data_intermedia <- rutas$ruta_data_intermedia
 
 
 
@@ -38,6 +38,26 @@ ruta_archivos_ensayo_simce <- ruta_data_in %>%
       recursive = TRUE) %>% 
   unlist()
 
+# nota: el objeto 60 tiene problema de tener dos claves correctas
+# Se elimina y se vuelve a correr validación
+data_rev[[60]]<-NULL
+data[[60]]<-NULL
+ruta_archivos_ensayo_simce <- ruta_archivos_ensayo_simce[-60]
+
+
+
+# Generar nombre de objetos
+
+nombre_salida <- str_to_lower(paste0(
+  str_extract(ruta_archivos_ensayo_simce, "LEN{1}|MAT{1}")
+  ,"_"
+  ,str_extract(ruta_archivos_ensayo_simce, "IIM{1}|\\dB")
+  ,"_"
+  ,str_extract(ruta_archivos_ensayo_simce, "Ensayo\\d")
+)) %>% 
+  str_replace("ii","II")
+
+
 ## Cargar archivo de datos y matriz de revisión
 
 data <- map(ruta_archivos_ensayo_simce
@@ -58,15 +78,6 @@ data_rev<-map(data_rev
                 )
               ) 
 
-
-data_rev[[60]] |> count(clave_correcta_s)
-
-# nota: el objeto 60 tiene problema de tener dos claves correctas
-# Se elimina y se vuelve a correr validación
-data_rev[[60]]<-NULL
-data[[60]]<-NULL
-ruta_archivos_ensayo_simce <- ruta_archivos_ensayo_simce[-60]
-
 for (i in 1:length(data_rev)) {
   
   if(max(data_rev[[i]]$rev_clave)>1){
@@ -77,7 +88,47 @@ for (i in 1:length(data_rev)) {
   
 }  
 
+# Revisar - por nivel los datos deben tener la misma cantidad de ítems
 
+rev_n_item_nivel<-map2(data_rev,ruta_archivos_ensayo_simce
+                      ,~.x |> 
+                        mutate(
+                          archivo = .y
+                        )
+                       )
+
+
+
+rev_n_item_nivel<-map2_dfr(rev_n_item_nivel,nombre_salida
+                           ,~.x |> 
+                             mutate(
+                               numero_item = max(.x$item_no)
+                               ,nombre_base := .y
+                             ) |> 
+                             dplyr::select(
+                               numero_item
+                               ,nombre_base
+                               ,archivo
+                             ) |> 
+                             slice(1)
+                           )
+rev_n_item_nivel<-rev_n_item_nivel |>
+  group_by(nombre_base) |> 
+  mutate(
+    max = max(numero_item)
+    ,min = min(numero_item)
+  ) |> 
+  ungroup()
+
+rev_n_item_nivel |> 
+  filter(
+    max!=min
+  ) |> 
+  arrange(nombre_base) |> 
+  dplyr::select(numero_item,archivo)
+
+
+# pendiente eliminar registros para ejecutar irt -----
 
 
 # Procesamiento información ----
@@ -215,16 +266,6 @@ stopifnot(
 
 
 # Exportar formato de datos para procesamiento ----------------------------
-# Generar nombre de objetos
-
-nombre_salida <- str_to_lower(paste0(
-  str_extract(ruta_archivos_ensayo_simce, "LEN{1}|MAT{1}")
-  ,"_"
-  ,str_extract(ruta_archivos_ensayo_simce, "IIM{1}|\\dB")
-  ,"_"
-  ,str_extract(ruta_archivos_ensayo_simce, "Ensayo\\d")
-)) %>% 
-  str_replace("ii","II")
 
 
 # nombfar objetos lista

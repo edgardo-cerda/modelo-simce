@@ -2,17 +2,17 @@
 
 # Cargar funciones -----
 
-data <-read_rds("../modelo-simce-datos/data_intermedia/datos_procesados_irt.rds")
-
-source("funciones/funciones_proyecto_simce.R")
-# generar rutas
-rutas<-generar_ruta()
-
-generar_tabulado_agregado_irt(
-  data = data_irt
-  ,ruta_data_in = rutas$ruta_data_in
-  ,ruta_data_intermedia = rutas$ruta_data_intermedia
-)
+# data <-read_rds("../modelo-simce-datos/data_intermedia/datos_procesados_irt.rds")
+# 
+# source("funciones/funciones_proyecto_simce.R")
+# # generar rutas
+# rutas<-generar_ruta()
+# 
+# generar_tabulado_agregado_irt(
+#   data = data_irt
+#   ,ruta_data_in = rutas$ruta_data_in
+#   ,ruta_data_intermedia = rutas$ruta_data_intermedia
+# )
 
 
 generar_tabulado_agregado_irt <- function(data,ruta_data_in, ruta_data_intermedia){
