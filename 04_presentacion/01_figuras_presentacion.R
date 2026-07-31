@@ -299,13 +299,47 @@ tablas$t_distribucional <- construir("t_distribucional", list(val_dist), {
       `Error de cuantiles` = round(qmae_B, 1),
       `Baseline: solo la media` = round(qmae_solo_media, 1)
     )
-  if ("qmae_B_oraculo" %in% names(base)) {
-    out$`Con media y sd observadas` <- round(base$qmae_B_oraculo, 1)
-  }
   out$`sd observada`  <- round(base$sd_observada, 1)
   out$`sd predicha`   <- round(base$sd_efectiva_B, 1)
   out
 })
+
+# --- 2.7b Distribución por Niveles de Aprendizaje
+# Traduce la validación distribucional al lenguaje que usan los colegios:
+# cuántos estudiantes quedan en cada nivel según el SIMCE real y cuántos
+# según el modelo. Los cortes son los oficiales de los Estándares de
+# Aprendizaje y se fijan en 04, no se estiman.
+tablas$t_niveles_logro <- construir("t_niveles_logro", list(niveles_logro), {
+  abrev <- c("matematica" = "Matemática", "lenguaje" = "Lenguaje")
+  NIVELES <- c("Insuficiente", "Elemental", "Adecuado")
+  
+  base <- niveles_logro %>%
+    mutate(
+      grado  = factor(grado, levels = ORDEN_GRADO,
+                      labels = ETIQ_GRADO[ORDEN_GRADO]),
+      area   = unname(abrev[area]),
+      nivel  = as.character(nivel),
+      real   = paste0(round(100 * pct_obs, 1), "%"),
+      modelo = paste0(round(100 * pct_pred, 1), "%")
+    ) %>%
+    arrange(grado, area)
+  
+  # Se arma columna por columna en vez de con pivot_wider: los nombres
+  # quedan controlados y no hay riesgo de que una columna se caiga en
+  # silencio por un desajuste de nombres.
+  tabla <- base %>% distinct(grado, area)
+  for (nv in NIVELES) {
+    for (val in c("real", "modelo")) {
+      nombre <- paste0(nv, " (", val, ")")
+      trozo <- base %>%
+        filter(nivel == nv) %>%
+        transmute(grado, area, !!nombre := .data[[val]])
+      tabla <- left_join(tabla, trozo, by = c("grado", "area"))
+    }
+  }
+  tabla %>% rename(Grado = grado, `Área` = area)
+})
+
 
 # --- 2.8 Error por estrato GSE
 tablas$t_estrato <- construir("t_estrato", list(val_estrato), {
