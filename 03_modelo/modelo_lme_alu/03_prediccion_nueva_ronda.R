@@ -328,3 +328,5 @@ cat("Listo. Archivos generados en output/modelo_lme/:\n",
     " - predicciones_individual.csv (versión A con rango, versión B, y legado v2)\n",
     " - chequeo_coherencia.csv\n",
     "\nSiguiente paso: 04_validacion_individual.R\n")
+
+
