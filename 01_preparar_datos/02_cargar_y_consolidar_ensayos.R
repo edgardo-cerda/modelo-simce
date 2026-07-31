@@ -2,6 +2,10 @@ library(tidyverse)
 library(arrow)
 library(readxl)
 
+
+# Cargar funciones 
+source("funciones/funciones_proyecto_simce.R")
+
 # Configurar rutas de archivos: ----
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
@@ -34,7 +38,7 @@ datos_ensayo_santillana_consolidado <- datos_ensayo_santillana |>
     # Homologar nombres y tipos de datos:
     .x |> 
       janitor::clean_names() |> 
-      select(agno = ano_lectivo, pais, id_colegio, colegio, curso, area, 
+      dplyr::select(agno = ano_lectivo, pais, id_colegio, colegio, curso, area, 
              id_evaluacion, evaluacion, 
              id_usuario_curso, nombre = nombre_y_apellido,
              porcentaje_logro = porcentaje_de_logro) |> 
@@ -53,7 +57,7 @@ codigos_plenos_rbd_1 <- file.path(ruta_data_in, 'Datos Medición Nacional_RBD',
                                   'SIMCE 2024-2025 + Colegios Pleno.xlsx') %>% 
   read_excel() %>% 
   janitor::clean_names() %>% 
-  select(rbd, id_pleno_1 = id_pleno, id_pleno_2) |> 
+  dplyr::select(rbd, id_pleno_1 = id_pleno, id_pleno_2) |> 
   pivot_longer(cols = c(id_pleno_1, id_pleno_2),
                names_to = "version_id_pleno",
                values_to = "id_pleno") |> 
@@ -63,7 +67,7 @@ codigos_plenos_rbd_2 <- file.path(ruta_data_in, 'Datos Medición Nacional_RBD',
                                   'Listado de colegios Pleno Chile.xlsx') %>% 
   read_excel() |> 
   janitor::clean_names() %>% 
-  select(rbd, id_pleno) |> 
+  dplyr::select(rbd, id_pleno) |> 
   mutate(version_id_pleno = "Listado de colegios Pleno Chile",
          rbd = as.integer(rbd)) |> 
   filter(!is.na(rbd))
@@ -72,7 +76,7 @@ codigos_plenos_rbd_3 <- file.path(ruta_data_in, 'ensayos_santillana',
                                   'colegios_sin_rbd_ agregados v1.xlsx') %>% 
   read_excel(sheet = 'Lista Colegios Pleno') |> 
   janitor::clean_names() |> 
-  select(rbd, id_pleno = id_colegio) |> 
+  dplyr::select(rbd, id_pleno = id_colegio) |> 
   mutate(version_id_pleno = "colegios_sin_rbd_ agregados v1")
 
 ## Evaluar si RBD son consistentes y están completas: ----
@@ -105,6 +109,12 @@ datos_ensayo_santillana_consolidado_final <- datos_ensayo_santillana_consolidado
     n_evaluacion = str_extract(tipo_evaluacion, '\\d+') %>% str_squish(),
     tipo_evaluacion = str_remove(tipo_evaluacion, '\\d+') %>% str_squish()
   ) 
+
+# Agregar puntaje simce modelo 1
+datos_ensayo_santillana_consolidado_final<-datos_ensayo_santillana_consolidado_final |> 
+  convertir_logro_simce_modelo1()
+
+
 
 # Guardar resultados
 datos_ensayo_santillana_consolidado_final |> 
