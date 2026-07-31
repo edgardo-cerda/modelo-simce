@@ -48,6 +48,38 @@ data_rev <- map(ruta_archivos_ensayo_simce
             ,~read_excel(.x,sheet = "Matriz") %>% 
               clean_names())
 
+# Revisar - Los archivos de clave deben tener sólo 1 respuesta correcta -----
+
+
+data_rev<-map(data_rev
+              ,~.x |> 
+                mutate(
+                  rev_clave = str_count(clave_correcta_s,"[[:alpha:]]")
+                )
+              ) 
+
+
+data_rev[[60]] |> count(clave_correcta_s)
+
+# nota: el objeto 60 tiene problema de tener dos claves correctas
+# Se elimina y se vuelve a correr validación
+data_rev[[60]]<-NULL
+data[[60]]<-NULL
+ruta_archivos_ensayo_simce <- ruta_archivos_ensayo_simce[-60]
+
+for (i in 1:length(data_rev)) {
+  
+  if(max(data_rev[[i]]$rev_clave)>1){
+    print(i)
+  }else{
+    print(glue::glue("data{i}:tiene una respuesta correcta por item")) 
+  }
+  
+}  
+
+
+
+
 # Procesamiento información ----
 
 ## Eliminar porcentaje de logro no deseado ----
@@ -184,7 +216,6 @@ stopifnot(
 
 # Exportar formato de datos para procesamiento ----------------------------
 # Generar nombre de objetos
-
 
 nombre_salida <- str_to_lower(paste0(
   str_extract(ruta_archivos_ensayo_simce, "LEN{1}|MAT{1}")
