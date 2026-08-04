@@ -2,12 +2,12 @@
 
 # Cargar funciones -----
 
-# data <-read_rds("../modelo-simce-datos/data_intermedia/datos_procesados_irt.rds")
-# 
-# source("funciones/funciones_proyecto_simce.R")
-# # generar rutas
-# rutas<-generar_ruta()
-# 
+data <-read_rds("../modelo-simce-datos/data_intermedia/datos_procesados_irt.rds")
+
+source("funciones/funciones_proyecto_simce.R")
+# generar rutas
+rutas<-generar_ruta()
+
 # generar_tabulado_agregado_irt(
 #   data = data_irt
 #   ,ruta_data_in = rutas$ruta_data_in
@@ -54,12 +54,16 @@ print(" se ejcutto generar_data_pre_irt")
 # generar modelo y salida en en carpeta intermedia
 
 # Matemática
-# tab_resumen_mate<-map_dfr(vector_ensayos
-#                           ,~  generar_modelo_irt(data_input = data_irt
-#                                                  ,asignatura = 1
-#                                                  ,ensayos = .x )
-#                           )
-  
+tab_resumen_mate<-map_dfr(vector_ensayos
+                          ,~  generar_modelo_irt(data_input = data_irt
+                                                 ,asignatura = 1
+                                                 ,ensayos = 1 )
+                          )
+
+
+
+
+
 # Lenguaje
 tab_resumen_leng<-map_dfr(vector_ensayos
                           ,~  generar_modelo_irt(data_input = data_irt

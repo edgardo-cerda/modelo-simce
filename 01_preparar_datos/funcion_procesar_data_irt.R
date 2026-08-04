@@ -40,8 +40,9 @@ ruta_archivos_ensayo_simce <- ruta_data_in %>%
 
 # nota: el objeto 60 tiene problema de tener dos claves correctas
 # Se elimina y se vuelve a correr validación
-data_rev[[60]]<-NULL
-data[[60]]<-NULL
+# data_rev[[60]]<-NULL
+# data[[60]]<-NULL
+
 ruta_archivos_ensayo_simce <- ruta_archivos_ensayo_simce[-60]
 
 
@@ -125,10 +126,19 @@ rev_n_item_nivel |>
     max!=min
   ) |> 
   arrange(nombre_base) |> 
-  dplyr::select(numero_item,archivo)
-
+  dplyr::select(numero_item, nombre_base,archivo)
 
 # pendiente eliminar registros para ejecutar irt -----
+# se eliminan archivos detectados en análisis
+
+names(data)=nombre_salida
+names(data_rev)=nombre_salida
+# elimianr registros detecvtados
+data[["mat_4b_ensayo2"]]<-NULL
+data_rev[["mat_4b_ensayo2"]]<-NULL
+data[["mat_IIm_ensayo1 "]]<-NULL
+data_rev[["mat_IIm_ensayo1 "]]<-NULL
+
 
 
 # Procesamiento información ----
@@ -266,10 +276,6 @@ stopifnot(
 
 
 # Exportar formato de datos para procesamiento ----------------------------
-
-
-# nombfar objetos lista
-names(data_revisada)=nombre_salida
 
 saveRDS(data_revisada,paste0(
   ruta_data_intermedia
