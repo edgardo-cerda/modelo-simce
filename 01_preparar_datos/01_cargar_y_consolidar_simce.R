@@ -221,3 +221,9 @@ datos_simce_rbd_consolidado_long <- datos_simce_rbd_consolidado |>
 
 datos_simce_rbd_consolidado_long |> 
   write_parquet(file.path(dir_salida, 'consolidado_datos_simce_rbd.parquet'))
+
+# Limpiar ambiente
+gc()
+rm(list=ls())
+
+

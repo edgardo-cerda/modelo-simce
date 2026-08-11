@@ -51,8 +51,8 @@ library(broom)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
 
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
 school_model_data <- dir_salidas %>% file.path('school_model_data.rds') %>% readRDS()
 
 anios     <- sort(unique(school_model_data$agno))
@@ -186,3 +186,4 @@ write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv")
 cat("\nListo. Modelos guardados en output/modelos_escolares.rds\n")
 cat("Métricas en output/metricas_validacion.csv\n")
 cat("Gráfico en output/diagnostico_observado_vs_predicho.png\n")
+

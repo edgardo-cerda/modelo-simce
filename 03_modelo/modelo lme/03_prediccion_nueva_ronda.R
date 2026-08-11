@@ -115,3 +115,4 @@ cat("\nListo. Archivos generados en output/:\n",
     " - predicciones_colegio.csv\n",
     " - predicciones_individual.csv\n",
     " - chequeo_coherencia.csv\n")
+
