@@ -1,10 +1,10 @@
 
 # #Funciones ----
-source("funciones/funciones_proyecto_simce.R")
-rutas <- generar_ruta()
-ruta_data_in <- rutas$ruta_data_in
-ruta_data_intermedia <- rutas$ruta_data_intermedia
-
+# source("funciones/funciones_proyecto_simce.R")
+# rutas <- generar_ruta()
+# ruta_data_in <- rutas$ruta_data_in
+# ruta_data_intermedia <- rutas$ruta_data_intermedia
+# 
 
 
 generar_data_pre_irt <- function(ruta_data_in,ruta_data_intermedia){
@@ -48,6 +48,9 @@ ruta_archivos_ensayo_simce <- ruta_archivos_ensayo_simce[-60]
 
 
 # Generar nombre de objetos
+#  Elimianr los que tnegan 2025
+ruta_archivos_ensayo_simce <- ruta_archivos_ensayo_simce[!str_detect(ruta_archivos_ensayo_simce, "2025")]
+
 
 nombre_salida <- str_to_lower(paste0(
   str_extract(ruta_archivos_ensayo_simce, "LEN{1}|MAT{1}")
@@ -57,6 +60,8 @@ nombre_salida <- str_to_lower(paste0(
   ,str_extract(ruta_archivos_ensayo_simce, "Ensayo\\d")
 )) %>% 
   str_replace("ii","II")
+
+
 
 
 ## Cargar archivo de datos y matriz de revisión
@@ -136,8 +141,41 @@ names(data_rev)=nombre_salida
 # elimianr registros detecvtados
 data[["mat_4b_ensayo2"]]<-NULL
 data_rev[["mat_4b_ensayo2"]]<-NULL
-data[["mat_IIm_ensayo1 "]]<-NULL
-data_rev[["mat_IIm_ensayo1 "]]<-NULL
+data[["mat_IIm_ensayo1"]]<-NULL
+data_rev[["mat_IIm_ensayo1"]]<-NULL
+
+# Revisar si todo quedó ok luego de eliminar los registros ----
+vector_nombres2 <- data_rev |> names()
+
+
+rev_n_item_nivel2<-map2_dfr(data_rev,vector_nombres2
+                           ,~.x |> 
+                             mutate(
+                               numero_item = max(.x$item_no)
+                               ,nombre_base := .y
+                             ) |> 
+                             dplyr::select(
+                               numero_item
+                               ,nombre_base
+                               #,archivo
+                             ) |> 
+                             slice(1)
+)
+rev_n_item_nivel2<-rev_n_item_nivel2 |>
+  group_by(nombre_base) |> 
+  mutate(
+    max = max(numero_item)
+    ,min = min(numero_item)
+  ) |> 
+  ungroup()
+
+rev_n_item_nivel2 |> 
+  filter(
+    max!=min
+  ) |> 
+  arrange(nombre_base) |> 
+  dplyr::select(numero_item, nombre_base)
+
 
 
 
@@ -281,6 +319,9 @@ saveRDS(data_revisada,paste0(
   ruta_data_intermedia
   ,"datos_procesados_irt.rds"
 ))
+
+
+return(data_revisada)
 
 print("Se escribe salida de datos en RDS")
 

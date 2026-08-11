@@ -1,8 +1,8 @@
 name|type|data|command|depend|seed|path|time|size|bytes|format|repository|iteration|parent|children|seconds|warnings|error
-bbdd_irt_resumen|stem||98b34255b305729b|8c718c00484c9bbe|-2032676169||t20661.1774943123s||0|rds|local|vector|||3.7|package 'janitor' was built under R version 4.3.2. package 'tidyverse' was built under R version 4.3.3. package 'dplyr' was built under R version 4.3.3. package 'ltm' was built under R version 4.3.3. package 'msm' was built under R version 4.3.3. package 'KernSmoothIRT' was built under R version 4.3.3. package 'arrow' was built under R version 4.3.3|ℹ In index: 1. Caused by error in `map()`: ℹ In index: 1. Caused by error in `bind_rows()`: ! Argument 1 must be a data frame or a named atomic vector.
+rutas|stem|fdffdd65b086a358|5588e11529fdf8b4|46b3c97d44b62237|-859073061||t20669.1476463323s|s193b|193|rds|local|vector|||0.02||
 generar_modelo_irt|function|9879ccb6f671797e
-generar_data_pre_irt|function|ded5e843d3954599
+generar_data_pre_irt|function|efa6364173c70dba
 generar_ruta|function|a957ddb6bfa250cb
-generar_tabulado_agregado_irt|function|cdd06922452f7bab
-rutas|stem|fdffdd65b086a358|5588e11529fdf8b4|46b3c97d44b62237|-859073061||t20665.1707721497s|s193b|193|rds|local|vector|||0.09||
-bbdd_pre_irt|stem|d06c445d20dcec50|e8b692b92910ae5c|ac75b530f2790aa0|-1930752770||t20665.1719457543s|s86b|86|rds|local|vector|||101.27||
+generar_tabulado_agregado_irt|function|735d8e6abb954ef5
+bbdd_pre_irt|stem|24045d7f4e7e7aa9|e8b692b92910ae5c|36386df4a2b71ea9|-1930752770||t20671.2123922098s|s10474292b|10474292|rds|local|vector|||45.7||
+bbdd_irt_resumen|stem||98b34255b305729b|15a741020caf1cc3|-2032676169||t20661.1774943123s||0|rds|local|vector|||62.39|Values from `rev_item` are not uniquely identified; output will contain list-cols. • Use `values_fn = list` to suppress this warning. • Use `values_fn = {summary_fun}` to summarise duplicates. • Use the following dplyr code to identify duplicates.   {data} >   dplyr::summarise(n = dplyr::n(), .by = c(nombre_apellido, curso, item)) >   dplyr::filter(n > 1L). Hessian matrix at convergence is not positive definite; unstable solution. . Values from `rev_item` are not uniquely identified; output will contain list-cols. • Use `values_fn = list` to suppress this warning. • Use `values_fn = {summary_fun}` to summarise duplicates. • Use the following dplyr code to identify duplicates.   {data} >   dplyr::summarise(n = dplyr::n(), .by = c(nombre_apellido, curso, item)) >   dplyr::filter(n > 1L)|ℹ In index: 2. Caused by error: ! los argumentos implican un número diferente de filas: 8236, 1921
