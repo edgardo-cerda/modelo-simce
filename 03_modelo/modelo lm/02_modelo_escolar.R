@@ -34,7 +34,8 @@ library(broom)
 
 # ---- 0. Configuración --------------------------------------------
 # Configurar rutas de archivos: ----
-rutas <- config::get(file = "config.yml")
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lm')
 
@@ -132,3 +133,5 @@ write_csv(tabla_resultados, file.path(dir_salidas, "metricas_validacion.csv"))
 cat("\nListo. Modelos guardados en output/modelos_escolares.rds\n")
 cat("Métricas en output/metricas_validacion.csv\n")
 cat("Gráfico en output/diagnostico_observado_vs_predicho.png\n")
+
+   

@@ -122,3 +122,42 @@ generar_modelo_irt <- function(data_input,asignatura,ensayos){
   
 }
 
+# Conversión porcentaje de logro -  puntaje simce ----
+
+convertir_logro_simce_modelo1 <- function(data){
+  
+  require(tidyverse)
+  require(dplyr)
+  require(readxl)
+  
+  
+  tabla_conversion <- read_excel("../modelo-simce-datos/data_in/Escala Simce Santillana 4basico_2025.xlsx"
+                                 ,sheet = "tabla_conversion")
+  
+  data<-data |>
+    mutate(
+      porcentaje_logro_sin_decimal = round(porcentaje_logro)
+    ) |> 
+    left_join(
+      tabla_conversion |> 
+        rename(
+          "puntaje_simce_leng"="puntaje_lect4b"
+          ,"puntaje_simce_mat"="puntaje_mate4b"
+        )
+      ,by = c("porcentaje_logro_sin_decimal"="porc_lect4b")
+    ) |> 
+    mutate(
+     puntaje_simce_modelo1 = case_when(
+       area == "lenguaje" ~puntaje_simce_leng
+       ,area == "matematica" ~puntaje_simce_mat
+     )
+   )
+  return(data)
+}
+
+
+
+
+
+
+

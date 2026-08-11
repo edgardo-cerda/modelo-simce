@@ -33,8 +33,8 @@
 # =============================================================
 
 library(tidyverse)
-
-rutas <- config::get(file = "config.yml")
+usuario <- Sys.info()[["user"]]
+rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lm')
 
@@ -64,7 +64,7 @@ write_csv(
   pred_colegio %>%
     select(agno, grado, area, rbd_revisado, n_estudiantes, mean_logro, last_logro, pred_simce),
   file.path(dir_salidas, "predicciones_colegio.csv"))
-)
+
 
 # ---- b) Predicción a nivel de estudiante ---------------------------------
 ind_para_predecir <- ind_features %>%
@@ -107,3 +107,4 @@ cat("\nListo. Archivos generados en", dir_salidas, ":\n",
     " - predicciones_colegio.csv\n",
     " - predicciones_individual.csv\n",
     " - chequeo_coherencia.csv\n")
+
