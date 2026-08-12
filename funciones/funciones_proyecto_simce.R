@@ -124,15 +124,11 @@ generar_modelo_irt <- function(data_input,asignatura,ensayos){
 
 # Conversión porcentaje de logro -  puntaje simce ----
 
-convertir_logro_simce_modelo1 <- function(data){
+convertir_logro_simce_modelo1 <- function(data, tabla_conversion){
   
   require(tidyverse)
   require(dplyr)
   require(readxl)
-  
-  
-  tabla_conversion <- read_excel("../modelo-simce-datos/data_in/Escala Simce Santillana 4basico_2025.xlsx"
-                                 ,sheet = "tabla_conversion")
   
   data<-data |>
     mutate(

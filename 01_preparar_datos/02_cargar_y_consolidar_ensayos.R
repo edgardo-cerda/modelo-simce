@@ -2,7 +2,6 @@ library(tidyverse)
 library(arrow)
 library(readxl)
 
-
 # Cargar funciones 
 source("funciones/funciones_proyecto_simce.R")
 
@@ -111,8 +110,11 @@ datos_ensayo_santillana_consolidado_final <- datos_ensayo_santillana_consolidado
   ) 
 
 # Agregar puntaje simce modelo 1
+tabla_conversion <- read_excel(file.path(ruta_data_in, "Escala Simce Santillana 4basico_2025.xlsx"),
+                               sheet = "tabla_conversion")
+
 datos_ensayo_santillana_consolidado_final<-datos_ensayo_santillana_consolidado_final |> 
-  convertir_logro_simce_modelo1()
+  convertir_logro_simce_modelo1(tabla_conversion)
 
 
 
