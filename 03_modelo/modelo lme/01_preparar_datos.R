@@ -101,6 +101,10 @@ ponderar_logro_leng <- read_parquet(
     ,"tab_resumen_irt_lenguaje.parquet"
   )
 )
+
+
+
+
 # Crear variale de ensayo para hacer cruce 
 ensayos_limpio<-ensayos_limpio |> 
   mutate(
@@ -108,23 +112,25 @@ ensayos_limpio<-ensayos_limpio |>
   ) |> 
   left_join(
     ponderar_logro_mate |> 
-      select(
+      dplyr::select(
         n_ensayo
+        ,grado
         ,"mean_dffclt_mate"=mean_dffclt
       ) |> 
       mutate(
         area = "matematica"
-      ),by = c("n_ensayo","area")
+      ),by = c("n_ensayo","area","grado")
   ) |>
   left_join(
     ponderar_logro_leng |> 
-      select(
+      dplyr::select(
         n_ensayo
+        ,grado
         ,"mean_dffclt_leng"=mean_dffclt
       ) |> 
       mutate(
         area = "lenguaje"
-      ),by = c("n_ensayo","area")
+      ),by = c("n_ensayo","area","grado")
   )
 
 # ponderar puntajes de logro 
