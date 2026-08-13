@@ -215,23 +215,31 @@ cat("\ncobertura_rango_A es la fracción de estudiantes cuyo puntaje emparejado\
 # segunda métrica está sesgada a favor de rho=1 por construcción. Por
 # eso rho debería fijarse por confiabilidad (ver 01), no optimizándolo
 # contra esta tabla.
-sensibilidad <- map_dfr(RHOS_SENSIBILIDAD, function(rho) {
+# OJO con el nombre del argumento: `emparejado` TRAE una columna llamada
+# `rho` (el rho por grupo que usó 03). Si la función se llama `function(rho)`,
+# dentro de mutate() y summarise() el enmascaramiento de datos hace ganar a la
+# COLUMNA, no al argumento: las cinco iteraciones devuelven exactamente el
+# mismo resultado —el de 03— y la tabla sale con una fila por estudiante en vez
+# de una por grupo. Por eso el argumento se llama `rho_sens` y se resta la
+# columna `rho` de los datos antes de usarla.
+sensibilidad <- map_dfr(RHOS_SENSIBILIDAD, function(rho_sens) {
   tmp <- emparejado %>%
+    select(-any_of("rho")) %>%
     mutate(
-      pred_rho = pred_simce_colegio + rho * sd_simce_pred * z_ensayo,
+      pred_rho = pred_simce_colegio + rho_sens * sd_simce_pred * z_ensayo,
       # Misma descomposición de la varianza residual que en 03: lo que el
       # ensayo no sabe del SIMCE, más lo que no sabemos de la posición
       # del propio estudiante (que depende de cuántos ensayos rindió).
       sd_res   = sd_simce_pred *
-                 sqrt(pmax((1 - rho^2) +
-                           rho^2 * (1 - coalesce(rel_indice, 1)), 0)),
+                 sqrt(pmax((1 - rho_sens^2) +
+                           rho_sens^2 * (1 - coalesce(rel_indice, 1)), 0)),
       inf      = pred_rho - qnorm(0.9) * sd_res,
       sup      = pred_rho + qnorm(0.9) * sd_res
     )
   tmp %>%
     group_by(grado, area) %>%
     summarise(
-      rho = rho,
+      rho = rho_sens,
       mae_emparejado = mean(abs(pred_rho - obs_emparejado), na.rm = TRUE),
       cobertura      = mean(obs_emparejado >= inf & obs_emparejado <= sup, na.rm = TRUE),
       ancho_rango    = mean(sup - inf, na.rm = TRUE),
@@ -427,7 +435,7 @@ write_csv(resumen_ind,  dir_salidas %>% file.path("validacion_individual.csv"))
 write_csv(sensibilidad, dir_salidas %>% file.path("validacion_sensibilidad_rho.csv"))
 write_csv(por_estrato,  dir_salidas %>% file.path("validacion_por_estrato.csv"))
 
-cat("\nListo. Resultados en output/modelo_lme/:\n",
+cat("\nListo. Resultados en ", dir_salidas, ":\n",
     " - validacion_distribucional.csv / validacion_individual.csv\n",
     " - validacion_sensibilidad_rho.csv / validacion_por_colegio.csv\n",
     " - validacion_distribucion_individual.png / validacion_dispersion_individual.png\n")

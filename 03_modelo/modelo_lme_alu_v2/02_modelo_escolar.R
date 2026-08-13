@@ -6,13 +6,13 @@
 # más reciente.
 #
 # FÓRMULA v5:
-#   promedio_simce ~ mean_logro_enc + pred_final_logro + nivel_hist_colegio
+#   promedio_simce ~ mean_logro_enc + nivel_hist_colegio
 #
 # FÓRMULA v4 (la anterior):
 #   promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
 #                     n_evals_prom + nivel_hist_colegio
 #
-# Dos variables salen y una cambia:
+# Tres variables salen y una cambia:
 #
 #  - SALE `slope_logro` (punto 1). Los ensayos no forman una progresión:
 #    tienen dificultades propias y no ordenadas. Una pendiente ajustada
@@ -42,11 +42,39 @@
 # fórmula v4 y contra `mean_logro` sin encoger, para poder auditarlo
 # en cada corrida.
 #
-# NOTA sobre `pred_final_logro`: se conserva porque no fue parte del
-# cambio pedido, pero conviene tener presente que se construye como
-# intercepto + pendiente*6, o sea contiene la misma pendiente que se
-# acaba de sacar del modelo. Si se quiere ser consistente hasta el
-# final, el paso siguiente es reemplazarlo por el intercepto solo.
+#  - SALE `pred_final_logro`, que es el paso que esta misma nota dejaba
+#    pendiente. Cuando el modelo de crecimiento de 01 tenía pendiente,
+#    esta variable era intercepto + pendiente*6, o sea una extrapolación:
+#    información distinta del promedio. Sacada la pendiente (punto 1),
+#    quedó siendo el intercepto solo, y el promedio por colegio de los
+#    interceptos encogidos por lme4 ES el `mean_logro` del colegio
+#    encogido. La fórmula tenía entonces DOS versiones encogidas de la
+#    misma cantidad, con dos mecanismos de encogimiento distintos: el
+#    explícito de la secc. 5b-bis de 01 y el implícito de lme4 más el
+#    recorte a [0,100].
+#
+#    La evidencia de que sobraba, medida sobre estos datos:
+#      - correlación con `mean_logro_enc`: 0.995 a 0.999; VIF de 73 a 360.
+#      - al regresar una sobre otra, el residuo de `pred_final_logro`
+#        tiene sd de 0.45-0.85 puntos de logro contra una sd propia de
+#        ~9.5 (R² 0.99-0.998). Ese residuo es el recorte a [0,100] y la
+#        diferencia entre las dos fórmulas de encogimiento, no señal
+#        sobre el colegio. Por eso se saca en vez de residualizarla.
+#      - el MAE out-of-time no decide: 10.3 con las dos, 10.2 con una
+#        sola (diferencias de ±0.3 puntos entre grupos, o sea ruido).
+#        El R² out-of-time sí mejora algo, de 0.716 a 0.737.
+#      - lo que decide es la ESTABILIDAD. Dejando fuera un año de
+#        entrenamiento por vez, con las dos variables los coeficientes
+#        hacen balancín: en 2m matemática saltan a +31.6 y -28.4, y en
+#        tres de los cuatro grupos el de logro sale con signo negativo
+#        compensado por el otro. Con una sola variable el coeficiente se
+#        queda entre 0.6 y 1.7, con signo estable y lectura directa
+#        ("un punto más de logro en el ensayo vale ~1 punto SIMCE").
+#
+#    Se conserva `pred_final_logro` como COLUMNA en `school_features`,
+#    `ind_features` y `predicciones_colegio.csv`: sólo deja de entrar al
+#    modelo. La especificación anterior queda en `formulas_auditoria`
+#    para poder seguir viéndola en cada corrida.
 #
 # Lo único que cambia es el rol que cumple dentro del pipeline:
 # ahora este modelo entrega la MEDIA de la distribución que se le
@@ -99,7 +127,7 @@ USAR_LOGRO_ENCOGIDO <- TRUE
 var_logro <- if (USAR_LOGRO_ENCOGIDO) "mean_logro_enc" else "mean_logro"
 
 formula_base <- as.formula(paste(
-  "promedio_simce ~", var_logro, "+ pred_final_logro + nivel_hist_colegio"
+  "promedio_simce ~", var_logro, "+ nivel_hist_colegio"
 ))
 formula_ctx  <- update(formula_base, . ~ . + contexto_nivel)
 
@@ -109,13 +137,41 @@ formula_modelo <- if (INCLUIR_CONTEXTO_APARTE) formula_ctx else formula_base
 # elegir mirando el año de prueba sería seleccionar sobre el test).
 # Se imprimen sus MAE junto al del modelo para poder revisar la decisión
 # con datos frescos en cada corrida.
+# OJO: la v4 completa llevaba además `slope_logro`, pero esa variable ya no
+# existe: el modelo de crecimiento de 01 (secc. 4) dejó de estimar pendiente
+# —sólo interceptos por colegio y por estudiante—, así que ni `school_features`
+# ni `ind_features` la traen. Dejarla en la fórmula no rompía nada porque el
+# tryCatch de más abajo la convertía en NA, pero la columna `mae_v4_completa`
+# salía NA en todas las corridas y la auditoría no auditaba nada. Se ajusta lo
+# que sí es reproducible con los datos actuales: la v4 sin la pendiente.
+#
+# `v5_con_pred_final` es la especificación que estuvo vigente hasta que se
+# sacó `pred_final_logro` por colinealidad (ver el encabezado). Se deja acá
+# para poder ver en cada corrida qué costó ese cambio: si en algún momento
+# el MAE de esta fila quedara claramente por debajo del del modelo, habría
+# que volver a mirar la decisión — pero revísese también el VIF que se
+# imprime más abajo antes de concluir nada.
 formulas_auditoria <- list(
-  v4_completa     = promedio_simce ~ mean_logro + pred_final_logro +
-                     slope_logro + n_evals_prom + nivel_hist_colegio,
-  v5_sin_encoger  = promedio_simce ~ mean_logro + pred_final_logro +
-                     nivel_hist_colegio,
-  v5_con_contexto = update(formula_base, . ~ . + contexto_nivel)
+  v4_sin_slope      = promedio_simce ~ mean_logro + pred_final_logro +
+                       n_evals_prom + nivel_hist_colegio,
+  v5_sin_encoger    = promedio_simce ~ mean_logro + nivel_hist_colegio,
+  v5_con_pred_final = update(formula_base, . ~ . + pred_final_logro),
+  v5_con_contexto   = update(formula_base, . ~ . + contexto_nivel)
 )
+
+# VIF de la fórmula elegida. Se imprime en cada corrida porque el motivo por
+# el que salió `pred_final_logro` fue exactamente éste, y porque cualquier
+# predictor que se agregue en el futuro puede reintroducir el problema en
+# silencio: la colinealidad no empeora el MAE de forma visible, sólo vuelve
+# los coeficientes inestables y no interpretables.
+vif_formula <- function(f, datos) {
+  X <- model.matrix(f, datos)[, -1, drop = FALSE]
+  if (ncol(X) < 2) return(setNames(rep(1, ncol(X)), colnames(X)))
+  sapply(colnames(X), function(v) {
+    r2 <- summary(lm(X[, v] ~ X[, setdiff(colnames(X), v), drop = FALSE]))$r.squared
+    1 / (1 - r2)
+  })
+}
 
 cat("Fórmula del modelo:\n  "); print(formula_modelo)
 cat("\n")
@@ -177,8 +233,10 @@ for (i in seq_len(nrow(grupos))) {
     mejora_vs_baseline_pct = 100 * (mae_baseline - mae_modelo) / mae_baseline,
     r2_test = r2_test,
     mae_alternativa_contexto = mae_alternativa,
-    mae_v4_completa   = mae_aud[["v4_completa"]],
+    mae_v4_sin_slope  = mae_aud[["v4_sin_slope"]],
     mae_v5_sin_encoger = mae_aud[["v5_sin_encoger"]],
+    mae_v5_con_pred_final = mae_aud[["v5_con_pred_final"]],
+    vif_maximo = max(vif_formula(formula_modelo, train)),
     # Sesgo medio del año de prueba. Vale la pena mirarlo: si es grande y
     # del mismo signo en todos los grupos, no es ruido — es que la escala
     # del ensayo se movió entre años y el modelo lo está leyendo como
@@ -198,9 +256,15 @@ for (i in seq_len(nrow(grupos))) {
   cat(sprintf("  Sesgo medio (predicho - observado): %+.1f puntos\n",
               resultados[[clave]]$sesgo_test))
   cat(sprintf(
-    "  Auditoría | v4 completa: %.1f | v5 sin encoger: %.1f | con contexto aparte: %.1f\n",
-    mae_aud[["v4_completa"]], mae_aud[["v5_sin_encoger"]], mae_alternativa
+    "  Auditoría | v4 sin slope: %.1f | v5 sin encoger: %.1f | con pred_final_logro: %.1f | con contexto aparte: %.1f\n",
+    mae_aud[["v4_sin_slope"]], mae_aud[["v5_sin_encoger"]],
+    mae_aud[["v5_con_pred_final"]], mae_alternativa
   ))
+  cat(sprintf("  VIF máximo de la fórmula: %.1f%s\n",
+              resultados[[clave]]$vif_maximo,
+              if (resultados[[clave]]$vif_maximo > 10)
+                "  <-- AVISO: colinealidad alta, los coeficientes no son interpretables"
+              else ""))
   cat(sprintf(
     "  MAE en colegios con <=1 año de historia (n=%d): %.1f | con historia: %.1f\n\n",
     sum(sin_hist), mae_sin_historia, mae_con_historia
@@ -285,7 +349,8 @@ saveRDS(diag_plot_data, dir_salidas %>% file.path("diag_nivel.rds"))  # lo usa 0
 saveRDS(anio_test, dir_salidas %>% file.path("anio_test.rds"))  # lo reusa 04
 write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv"))
 
-cat("\nListo. Modelos de NIVEL guardados en output/modelo_lme/modelos_escolares.rds\n")
+cat("\nListo. Modelos de NIVEL guardados en",
+    dir_salidas %>% file.path("modelos_escolares.rds"), "\n")
 cat("Siguiente paso: 02b_modelo_dispersion.R (modelo del ANCHO de la distribución)\n")
 
 

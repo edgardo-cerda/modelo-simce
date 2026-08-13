@@ -315,6 +315,7 @@ saveRDS(diag_sd,    dir_salidas %>% file.path("diag_dispersion.rds"))  # lo usa 
 saveRDS(limites_sd, dir_salidas %>% file.path("limites_dispersion.rds"))
 write_csv(tabla_sd, dir_salidas %>% file.path("metricas_dispersion.csv"))
 
-cat("\nListo. Modelos de dispersión en output/modelo_lme/modelos_dispersion.rds\n")
-cat("Métricas en output/modelo_lme/metricas_dispersion.csv\n")
+cat("\nListo. Modelos de dispersión en",
+    dir_salidas %>% file.path("modelos_dispersion.rds"), "\n")
+cat("Métricas en", dir_salidas %>% file.path("metricas_dispersion.csv"), "\n")
 

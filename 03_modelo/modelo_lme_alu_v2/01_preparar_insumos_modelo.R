@@ -1,11 +1,12 @@
 # =============================================================
-# 01_preparar_datos.R  (v5)
+# 01_preparar_insumos_modelo.R  (v5)
 # -------------------------------------------------------------
 # CAMBIOS v5 (revisión metodológica). Cinco cambios, cuatro de ellos
 # tocan este script:
 #
-# (1) `slope_logro` sale del modelo de nivel (el cambio está en 02; acá
-#     la variable se sigue calculando como diagnóstico). Motivo: los
+# (1) `slope_logro` sale del modelo de nivel Y del script: el modelo de
+#     crecimiento de la sección 4 dejó de estimar pendiente, así que la
+#     variable ya no se calcula ni siquiera como diagnóstico. Motivo: los
 #     ensayos no forman una progresión, tienen dificultades propias. En
 #     4b matemática 2025 el logro medio por ensayo va 61.0, 62.2, 68.2,
 #     60.1, 70.4, 72.8; en 2m matemática el ensayo 3 rinde 32.8 y el 5
@@ -145,7 +146,7 @@
 # que `nivel_hist_colegio`, para no filtrar información del
 # futuro hacia el pasado.
 #
-# Salidas (en output/modelo_lme/):
+# Salidas (en `dir_salidas` = <ruta_outputs>/modelo_lme_alu_v2/):
 #   - ind_features.rds      : 1 fila por estudiante x año x grado x área.
 #                             pct_ensayo y z_ensayo son la posición del
 #                             estudiante DENTRO de su colegio. v5 agrega
@@ -154,8 +155,8 @@
 #                             (su confiabilidad), `k_ensayos`,
 #                             `tiene_otra_area`, y las versiones v4 del
 #                             ordenamiento para auditar el cambio
-#                             (`indice_v4_legado`, `z_ensayo_v4`,
-#                             `pct_ensayo_v4`).
+#                             (`z_ensayo_v4`, `pct_ensayo_v4`, ambas
+#                             construidas sobre `pred_final_logro`).
 #                             OJO: `z_ensayo` YA NO tiene sd 1 dentro del
 #                             colegio; ver la nota de escala en 4b.
 #   - school_features.rds   : 1 fila por colegio x año x grado x área
@@ -440,8 +441,13 @@ simce_alumno <- simce_alu0 %>%
   pivot_longer(cols = c(ptje_mate, ptje_lect, eem_mate, eem_lect, eda_mate, eda_lect),
                names_sep = '_',
                names_to = c('.value', 'area')
-               ) %>% 
-  mutate(area = ifelse(area == 'mate', 'matematica', 'lenguaje'))
+               ) %>%
+  mutate(area = ifelse(area == 'mate', 'matematica', 'lenguaje')) %>%
+  # Se descartan efectivamente los puntajes ausentes (~20% de las filas).
+  # No es cosmético: `simce_dist` contaría esos alumnos en `n_alu_simce`,
+  # y las secciones que llaman a density() o quantile() sin na.rm (6c, 8b)
+  # abortan si quedan NA.
+  filter(!is.na(ptje))
 
 rm(simce_alu0); gc()
 
@@ -515,14 +521,18 @@ resumen_simple <- ensayos_dedup %>%
   )
 
 # ---- 4. Modelo de crecimiento por estudiante (lme4) -------------------
-# pendiente aleatoria por COLEGIO e intercepto aleatorio por estudiante, porque ~27% de los
-# estudiantes rinde un solo ensayo y una pendiente individual no es identificable.)
+# Interceptos aleatorios por COLEGIO y por ESTUDIANTE. Ya NO hay pendiente:
+# ni individual (~27% de los estudiantes rinde un solo ensayo, así que no es
+# identificable) ni por colegio (los ensayos no forman una progresión — ver el
+# punto (1) del encabezado). Por lo tanto este script tampoco produce
+# `slope_logro`, y 02 no la puede usar.
 #
-# NUEVO: además de pred_final_logro (acotado a [0,100]) se devuelve
-# `pred_final_logro_raw`, sin acotar, y `nivel_est` (el intercepto
-# aleatorio del estudiante, ya encogido por lme4). El acotado a [0,100]
-# genera EMPATES en los extremos, lo que arruinaría el ranking dentro
-# del colegio: para ordenar estudiantes se usa la versión sin acotar.
+# Se devuelve `pred_final_logro` (el intercepto total, acotado a [0,100]) y
+# `nivel_est` (el intercepto aleatorio del estudiante, ya encogido por lme4).
+# El acotado a [0,100] genera EMPATES en los extremos, así que para ordenar
+# estudiantes dentro del colegio NO se usa: eso lo hace `indice_ensayo` de la
+# sección 4b. `pred_final_logro` queda como predictor del modelo de colegio
+# (02) y como base de las columnas de auditoría `*_v4`.
 ajustar_crecimiento_grupo <- function(datos_grupo) {
   
   modelo <- lmer(
@@ -855,8 +865,8 @@ cat("\n  Cobertura de la otra área:",
 #   - versión A (dispersión): usa z_ensayo
 #   - versión B (matching por percentil): usa pct_ensayo
 #
-# CAMBIO v5: el índice sobre el que se ordena ya no es
-# `pred_final_logro_raw` sino `indice_ensayo`, el estimador encogido por
+# CAMBIO v5: el índice sobre el que se ordena ya no es la predicción del
+# modelo de crecimiento sino `indice_ensayo`, el estimador encogido por
 # confiabilidad de la sección 4b. Dos diferencias:
 #
 #   - Ya no extrapola la pendiente a un ensayo 6 hipotético. Esa
@@ -870,8 +880,9 @@ cat("\n  Cobertura de la otra área:",
 #     dejar disponible la confiabilidad individual, que es lo que
 #     permite pesar la otra área.
 #
-# `pred_final_logro_raw` se conserva como `indice_v4_legado` para poder
-# comparar los dos ordenamientos.
+# El ordenamiento v4 se conserva como `z_ensayo_v4` / `pct_ensayo_v4`,
+# construidos sobre `pred_final_logro`, para poder comparar los dos
+# ordenamientos (la comparación se imprime unas líneas más abajo).
 ind_features <- resumen_simple %>%
   inner_join(
     crecimiento_individual,
@@ -1797,8 +1808,9 @@ dens_logro_ensayo <- ind_features %>%
   }) %>%
   ungroup()
 
-# ¿Sube el logro a medida que avanzan los ensayos del año? Es la señal
-# que recoge `slope_logro`.
+# ¿Sube el logro a medida que avanzan los ensayos del año? Es la serie que
+# motivó sacar la pendiente del modelo (punto 1): sube y baja según la
+# dificultad de cada ensayo, no de forma monótona.
 logro_por_evaluacion <- ensayos_dedup %>%
   group_by(agno, grado, area, n_evaluacion) %>%
   summarise(logro_medio = mean(porcentaje_logro),
@@ -1898,7 +1910,7 @@ saveRDS(cortes_tercil,     dir_salidas %>% file.path("cortes_tercil.rds"))
 saveRDS(limites_simce,     dir_salidas %>% file.path("limites_simce.rds"))
 saveRDS(confiabilidades,   dir_salidas %>% file.path("confiabilidades.rds"))
 
-cat("\nListo. Objetos guardados en output/modelo_lme/*.rds\n")
+cat("\nListo. Objetos guardados en", dir_salidas, "(*.rds)\n")
 
 cat("\n-------------------------------------------------------------\n")
 cat("AVISO v5 - nombres cambiados. Cualquier script aguas abajo que no\n")

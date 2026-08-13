@@ -322,9 +322,37 @@ pred_B <- pred_A %>%
 # modelo de colegio a las features del estudiante. Se conserva para que
 # 04 pueda mostrar cuánto se gana con el cambio.
 predecir_legado <- function(datos, clave) {
-  datos$pred_v2_legado <- if (clave %in% names(modelos)) {
-    predict(modelos[[clave]], newdata = datos)
-  } else NA_real_
+
+  if (!clave %in% names(modelos)) {
+    datos$pred_v2_legado <- NA_real_
+    return(datos)
+  }
+
+  modelo    <- modelos[[clave]]
+  faltantes <- setdiff(all.vars(delete.response(terms(modelo))), names(datos))
+
+  # `mean_logro_enc` (v5) existe SÓLO a nivel de colegio: es el promedio del
+  # colegio encogido hacia el promedio de su grupo según la confiabilidad de
+  # esa medición (01, secc. 5b-bis), y no tiene contraparte por estudiante.
+  # Como esta función es justamente la versión legado —aplicarle los
+  # coeficientes del colegio a las features del ESTUDIANTE—, el análogo
+  # individual del término de logro es el `mean_logro` del propio estudiante,
+  # que es lo que llevaba la fórmula de la v4. Sin esto, predict() aborta con
+  # "objeto 'mean_logro_enc' no encontrado" y se cae el script entero.
+  if ("mean_logro_enc" %in% faltantes) {
+    datos$mean_logro_enc <- datos$mean_logro
+    faltantes <- setdiff(faltantes, "mean_logro_enc")
+  }
+
+  if (length(faltantes) > 0) {
+    warning("La comparación legado se omite en ", clave,
+            ": el modelo de 02 usa predictores que no existen a nivel de ",
+            "estudiante (", paste(faltantes, collapse = ", "), ").")
+    datos$pred_v2_legado <- NA_real_
+    return(datos)
+  }
+
+  datos$pred_v2_legado <- predict(modelo, newdata = datos)
   datos
 }
 
@@ -404,7 +432,7 @@ saveRDS(pred_individual, dir_salidas %>% file.path("predicciones_individual.rds"
 saveRDS(pred_colegio,    dir_salidas %>% file.path("predicciones_colegio.rds"))
 write_csv(chequeo, dir_salidas %>% file.path("chequeo_coherencia.csv"))
 
-cat("Listo. Archivos generados en output/modelo_lme/:\n",
+cat("Listo. Archivos generados en ", dir_salidas, ":\n",
     " - predicciones_colegio.csv   (media y ancho predichos por colegio)\n",
     " - predicciones_individual.csv (versión A con rango, versión B, y legado v2)\n",
     " - chequeo_coherencia.csv\n",
