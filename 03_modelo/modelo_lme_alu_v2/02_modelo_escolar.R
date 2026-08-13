@@ -151,12 +151,21 @@ formula_modelo <- if (INCLUIR_CONTEXTO_APARTE) formula_ctx else formula_base
 # el MAE de esta fila quedara claramente por debajo del del modelo, habría
 # que volver a mirar la decisión — pero revísese también el VIF que se
 # imprime más abajo antes de concluir nada.
+#
+# `v6_sin_irt` es la MISMA fórmula pero con el nivel escolar construido
+# sobre el porcentaje de logro observado en vez del puntaje verdadero IRT
+# (01 deja las dos columnas calculadas). Es la comparación que dice qué
+# aportó la calibración del punto de vista del error de predicción, y por
+# eso conviene tenerla impresa en cada corrida y no sólo el día que se
+# hizo el cambio.
 formulas_auditoria <- list(
   v4_sin_slope      = promedio_simce ~ mean_logro + pred_final_logro +
                        n_evals_prom + nivel_hist_colegio,
   v5_sin_encoger    = promedio_simce ~ mean_logro + nivel_hist_colegio,
   v5_con_pred_final = update(formula_base, . ~ . + pred_final_logro),
-  v5_con_contexto   = update(formula_base, . ~ . + contexto_nivel)
+  v5_con_contexto   = update(formula_base, . ~ . + contexto_nivel),
+  v6_sin_irt        = promedio_simce ~ mean_logro_crudo_enc + nivel_hist_colegio,
+  v6_con_irt        = promedio_simce ~ mean_logro_irt_enc + nivel_hist_colegio
 )
 
 # VIF de la fórmula elegida. Se imprime en cada corrida porque el motivo por
@@ -236,6 +245,9 @@ for (i in seq_len(nrow(grupos))) {
     mae_v4_sin_slope  = mae_aud[["v4_sin_slope"]],
     mae_v5_sin_encoger = mae_aud[["v5_sin_encoger"]],
     mae_v5_con_pred_final = mae_aud[["v5_con_pred_final"]],
+    mae_sin_irt = mae_aud[["v6_sin_irt"]],
+    mae_con_irt = mae_aud[["v6_con_irt"]],
+    gana_irt_pts = mae_aud[["v6_sin_irt"]] - mae_aud[["v6_con_irt"]],
     vif_maximo = max(vif_formula(formula_modelo, train)),
     # Sesgo medio del año de prueba. Vale la pena mirarlo: si es grande y
     # del mismo signo en todos los grupos, no es ruido — es que la escala
@@ -260,6 +272,9 @@ for (i in seq_len(nrow(grupos))) {
     mae_aud[["v4_sin_slope"]], mae_aud[["v5_sin_encoger"]],
     mae_aud[["v5_con_pred_final"]], mae_alternativa
   ))
+  cat(sprintf("  IRT | sin IRT: %.1f | con IRT: %.1f | gana %+.1f puntos de MAE\n",
+              mae_aud[["v6_sin_irt"]], mae_aud[["v6_con_irt"]],
+              mae_aud[["v6_sin_irt"]] - mae_aud[["v6_con_irt"]]))
   cat(sprintf("  VIF máximo de la fórmula: %.1f%s\n",
               resultados[[clave]]$vif_maximo,
               if (resultados[[clave]]$vif_maximo > 10)

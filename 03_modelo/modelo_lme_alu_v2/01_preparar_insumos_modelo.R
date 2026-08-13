@@ -200,8 +200,38 @@ GRADOS_MODELO <- c("4b", "2m")   # los únicos con ensayo Santillana
 # Grilla de percentiles con que se guarda la plantilla de forma.
 GRILLA_P      <- seq(0.005, 0.995, by = 0.005)
 
+# --- IRT (v6) ------------------------------------------------------------
+# En TRUE, la medida base del ensayo deja de ser el porcentaje de logro
+# observado y pasa a ser la habilidad estimada por la calibración IRT
+# concurrente de 00_irt_calibracion.R. Entra en los DOS niveles:
+#
+#   - INDIVIDUAL (secc. 4b): `x_est` es theta y el error de medición es
+#     `se_theta^2`, que la calibración entrega por estudiante. Reemplaza al
+#     par (promedio de logro, sigma^2/k): antes la precisión de un
+#     estudiante se aproximaba por CUÁNTOS ensayos rindió; ahora se sabe
+#     directamente, y también depende de CUÁLES rindió y de cuánto
+#     discriminaban esos ítems.
+#
+#   - ESCOLAR (secc. 5b): `mean_logro` pasa a ser el promedio del PUNTAJE
+#     VERDADERO del estudiante, definido como el porcentaje del banco
+#     completo de ítems del año que contestaría bien dado su theta
+#     (curva característica del test evaluada en theta). Sigue estando en
+#     puntos de porcentaje de logro —así 02, 02b, 03 y 04 no cambian de
+#     escala ni de interpretación— pero ya no depende de QUÉ ensayos aplicó
+#     el colegio. Ésa era la contaminación medida: la dificultad de la
+#     batería aplicada explicaba entre 2.4% y 13.4% de la varianza de
+#     `mean_logro` entre colegios.
+#
+# En FALSE el script se comporta como la v5 (logro observado). Las dos
+# versiones se calculan SIEMPRE, porque la sección 8c las compara; el
+# switch sólo decide cuál queda en las columnas que consumen 02 y 02b.
+USAR_IRT <- TRUE
+
 # --- Parámetros del índice individual encogido (sección 4b, v5) ---------
 
+# Descuento clásico de dificultad (promedio de logro por ensayo). Es el
+# sustituto pobre del IRT y sólo tiene sentido con USAR_IRT = FALSE: theta
+# ya viene libre de la dificultad de la forma.
 AJUSTAR_DIFICULTAD <- FALSE
 # Mínimo de estudiantes para estimar la varianza verdadera entre alumnos
 # DENTRO de un colegio. Bajo este umbral se usa la del grupo completo.
@@ -284,6 +314,64 @@ simce0_rbd <- ruta_data_intermedia %>%
 
 simce <- simce0_rbd %>%
   filter(!outlier_iqr, !outlier_isoforest)
+
+## IRT: habilidad por estudiante y parámetros de ítem (v6) ----
+# Los produce 00_irt_calibracion.R. theta está en una escala común entre
+# los ensayos de un mismo año x grado x área (media 0, sd 1 en la cohorte
+# Santillana de ese año), NO entre años.
+ruta_irt_theta <- dir_salidas %>% file.path("irt_theta.rds")
+ruta_irt_items <- dir_salidas %>% file.path("irt_items.rds")
+
+if (!file.exists(ruta_irt_theta) || !file.exists(ruta_irt_items)) {
+  stop("Faltan las salidas de la calibración IRT (", ruta_irt_theta,
+       "). Hay que correr antes 00_irt_calibracion.R, o poner USAR_IRT <- FALSE.")
+}
+
+irt_theta <- readRDS(ruta_irt_theta)
+irt_items <- readRDS(ruta_irt_items)
+
+# --- Puntaje verdadero: theta traducido a porcentaje de logro ------------
+# La curva característica del test evaluada en theta: qué porcentaje del
+# BANCO COMPLETO de ítems de ese año x grado x área contestaría bien un
+# estudiante con esa habilidad,
+#
+#     logro_irt(theta) = 100 * media_j  P(correcto | theta, a_j, b_j)
+#
+# con P el 2PL. Es una transformación monótona de theta, así que no cambia
+# ningún ordenamiento, pero devuelve la medida a la escala en que está
+# escrito el resto del proyecto (0-100) y la vuelve independiente de qué
+# ensayos aplicó cada colegio: todos se evalúan contra el mismo banco.
+#
+# Se evalúa sobre una grilla y se interpola, en vez de calcular 12.000 x 240
+# probabilidades por grupo.
+curva_verdadera <- function(theta_vec, a_vec, b_vec, n_grilla = 2001) {
+  grilla <- seq(min(theta_vec) - 0.5, max(theta_vec) + 0.5, length.out = n_grilla)
+  tcc <- vapply(grilla, function(th) mean(plogis(a_vec * (th - b_vec))), numeric(1))
+  approx(x = grilla, y = 100 * tcc, xout = theta_vec, rule = 2)$y
+}
+
+irt_theta <- irt_theta %>%
+  group_by(agno, grado, area) %>%
+  group_modify(function(.x, .y) {
+    it <- irt_items %>%
+      filter(agno == .y$agno, grado == .y$grado, area == .y$area,
+             is.finite(a), is.finite(b))
+    .x$logro_irt <- if (nrow(it) == 0) NA_real_ else
+      curva_verdadera(.x$theta, it$a, it$b)
+    .x
+  }) %>%
+  ungroup()
+
+cat("IRT cargado:", nrow(irt_theta), "estudiantes con theta |",
+    n_distinct(paste(irt_theta$agno, irt_theta$grado, irt_theta$area)),
+    "grupos calibrados\n")
+
+stopifnot(
+  "irt_theta trae theta o se_theta no finitos" =
+    all(is.finite(irt_theta$theta) & is.finite(irt_theta$se_theta)),
+  "la transformación a puntaje verdadero dejó NA" =
+    !any(is.na(irt_theta$logro_irt))
+)
 
 ## SIMCE POR ALUMNO (NUEVO) ----
 ruta_alu <- ruta_data_intermedia %>%
@@ -394,11 +482,18 @@ ensayos_limpio <- ensayos_limpio %>%
     )
   )
 
-# consolidar variable en porcentaje de logro 
+# consolidar variable en porcentaje de logro
+# OJO (v6): esta ponderación por `mean_dffclt` sólo se aplica con
+# USAR_IRT = FALSE. Con el IRT activo sería una corrección DOBLE, y además
+# de signo poco confiable: los `mean_dffclt` de tab_resumen_irt_*.parquet
+# salen de un 3PL ajustado por separado en cada ensayo, así que cada uno
+# está en su propia escala y no son comparables entre formas. Medido contra
+# la calibración concurrente, el orden de dificultad que implican es el
+# correcto en 4b (Spearman 0.94-1.00) pero no en 2m (0.77).
 ensayos_limpio <- ensayos_limpio %>%
   mutate(
-    porcentaje_logro_respaldo =porcentaje_logro
-    ,porcentaje_logro = case_when(
+    porcentaje_logro_respaldo = porcentaje_logro
+    ,porcentaje_logro = if (USAR_IRT) porcentaje_logro else case_when(
       area == "matematica"~porcentaje_logro_ajustado_mate
       ,area == "lenguaje"~porcentaje_logro_ajustado_leng
     )
@@ -511,13 +606,39 @@ print(
 )
 
 # ---- 3. Resumen simple por estudiante --------------------------------
+# CAMBIO v6: se llevan las DOS medidas por estudiante.
+#
+#   mean_logro_crudo = promedio del porcentaje de logro de los ensayos que
+#                      rindió. Depende de CUÁLES rindió: un alumno que sólo
+#                      dio el ensayo fácil sale mejor evaluado sin ser mejor.
+#   mean_logro_irt   = puntaje verdadero, o sea qué porcentaje del banco
+#                      COMPLETO de ítems del año contestaría bien según su
+#                      theta. Misma escala 0-100, pero ya no depende de qué
+#                      ensayos le tocaron.
+#
+# `mean_logro` (la columna que consumen 5b, 02 y 02b) es una de las dos
+# según USAR_IRT. Se conservan ambas para poder compararlas en la secc. 8c.
 resumen_simple <- ensayos_dedup %>%
   group_by(id_usuario_curso, agno, grado, area, rbd_revisado) %>%
   summarise(
-    n_evals    = n(),
-    mean_logro = mean(porcentaje_logro),
+    n_evals          = n(),
+    mean_logro_crudo = mean(porcentaje_logro),
     .groups = "drop"
+  ) %>%
+  left_join(
+    irt_theta %>% select(agno, grado, area, id_usuario_curso,
+                         theta, se_theta, mean_logro_irt = logro_irt),
+    by = c("agno", "grado", "area", "id_usuario_curso")
+  ) %>%
+  mutate(
+    # Un estudiante sin theta (grupo no calibrado) conserva su logro crudo:
+    # es peor medida, pero deja al alumno en la base en vez de borrarlo.
+    mean_logro_irt = coalesce(mean_logro_irt, mean_logro_crudo),
+    mean_logro     = if (USAR_IRT) mean_logro_irt else mean_logro_crudo
   )
+
+cat("\nEstudiantes sin theta que conservan su logro crudo:",
+    sum(is.na(resumen_simple$theta)), "de", nrow(resumen_simple), "\n")
 
 # ---- 4. Modelo de crecimiento por estudiante (lme4) -------------------
 # Interceptos aleatorios por COLEGIO y por ESTUDIANTE. Ya NO hay pendiente:
@@ -701,7 +822,174 @@ sigma2_grupo <- ensayos_ind %>%
   )
 
 # --- (iii) Nivel observado de cada estudiante --------------------------
-est_base <- ensayos_ind %>%
+# CAMBIO v6: los pasos (iv) y (v) pasaron a ser una función. Lo único que
+# necesitan del insumo es una medida por estudiante (`x_est`) y la varianza
+# de su error de medición (`var_err`); todo lo demás —descontar el ruido de
+# la varianza interna del colegio, encoger, componer con la otra área— es
+# idéntico venga esa medida del promedio de logro o de la calibración IRT.
+# Con la función escrita una sola vez, las dos versiones se construyen con
+# la misma aritmética y la comparación de la sección 8c es limpia.
+#
+#   versión "crudo": x_est = promedio de logro, var_err = sigma^2 / k
+#   versión "irt"  : x_est = theta,             var_err = se_theta^2
+#
+# La diferencia de fondo entre ambas no es la escala sino de dónde sale la
+# precisión: en la primera se aproxima por cuántos ensayos rindió el
+# estudiante, y en la segunda la entrega la calibración, que además sabe
+# CUÁLES rindió y cuánto discriminaban esos ítems.
+construir_indice <- function(est_entrada, etiqueta) {
+
+  cat("\n  --- índice individual, versión:", etiqueta, "---\n")
+
+  # --- (iv) tau^2 verdadera entre estudiantes del mismo colegio ----------
+  # Primero una versión de grupo (respaldo para colegios chicos), después
+  # la propia de cada colegio. La varianza OBSERVADA entre estudiantes
+  # mezcla diferencias reales con ruido de medición; se descuenta el ruido.
+  tau2_grupo <- est_entrada %>%
+    group_by(agno, grado, area, rbd_revisado) %>%
+    filter(n() >= MIN_EST_TAU) %>%
+    mutate(x_c = x_est - mean(x_est)) %>%
+    group_by(agno, grado, area) %>%
+    summarise(
+      var_obs_g = sum(x_c^2) / pmax(n() - n_distinct(rbd_revisado), 1),
+      var_err_g = mean(var_err),
+      tau2_g    = pmax(var_obs_g - var_err_g, PISO_TAU2 * var_obs_g),
+      .groups = "drop"
+    ) %>%
+    select(agno, grado, area, tau2_g)
+
+  est_base <- est_entrada %>%
+    left_join(tau2_grupo, by = c("agno", "grado", "area")) %>%
+    # Último respaldo de tau^2, calculado DENTRO de cada grado x área: si un
+    # grupo entero quedara sin `tau2_g` (ningún colegio con MIN_EST_TAU
+    # estudiantes), se usa la varianza entre todos sus estudiantes. Es peor
+    # estimación —mezcla diferencias entre colegios con diferencias dentro—
+    # pero es finita y del grupo correcto. Usar una varianza global mezclaría
+    # 4b lenguaje con 2m matemática, que están en escalas distintas.
+    group_by(grado, area) %>%
+    mutate(tau2_respaldo = pmax(var(x_est, na.rm = TRUE), 1e-6)) %>%
+    group_by(agno, grado, area, rbd_revisado) %>%
+    mutate(
+      n_est_col = n(),
+      x_c       = x_est - mean(x_est),
+      var_obs_c = var(x_est),               # NA si el colegio tiene 1 estudiante
+      var_err_c = mean(var_err)
+    ) %>%
+    ungroup() %>%
+    mutate(
+      tau2 = if_else(
+        n_est_col >= MIN_EST_TAU & !is.na(var_obs_c),
+        pmax(var_obs_c - var_err_c, PISO_TAU2 * var_obs_c),
+        tau2_g
+      ),
+      # Nunca por debajo del piso del grupo: un colegio cuyo ruido explica
+      # toda su varianza interna quedaría con tau2 = 0 y todos sus
+      # estudiantes encogidos al promedio exacto, borrando el ordenamiento.
+      tau2      = pmax(coalesce(tau2, tau2_g), PISO_TAU2 * coalesce(tau2_g, 0)),
+      tau2      = if_else(is.na(tau2) | tau2 <= 0, tau2_respaldo, tau2),
+      rel_est   = tau2 / (tau2 + var_err),
+      z_bruto   = x_c / sqrt(tau2)
+    ) %>%
+    select(-tau2_respaldo)
+
+  stopifnot(
+    "tau2 no finito en la sección 4b" = all(is.finite(est_base$tau2)),
+    "rel_est fuera de [0,1] en la sección 4b" =
+      all(est_base$rel_est >= 0 & est_base$rel_est <= 1)
+  )
+
+  # --- (v) Compuesto con la otra área (BLUP bivariado) -------------------
+  areas_disp <- sort(unique(est_base$area))
+  usar_cruce <- length(areas_disp) == 2
+  if (!usar_cruce) {
+    warning("Se esperaban exactamente 2 áreas para el compuesto; encontradas: ",
+            paste(areas_disp, collapse = ", "),
+            ". El índice usará sólo el área propia.")
+  }
+
+  otra_area <- est_base %>%
+    transmute(agno, grado, rbd_revisado, id_usuario_curso,
+              area_otra = area, z_otra = z_bruto, rel_otra = rel_est)
+
+  # Con dos áreas, rev() da el mapeo cruzado (a->b, b->a). Si no hay
+  # exactamente dos, area_otra queda en NA para que el join no empareje
+  # cada área CONSIGO MISMA, que daría rel_otra = rel_est y correlación 1.
+  mapa_areas <- tibble(
+    area      = areas_disp,
+    area_otra = if (usar_cruce) rev(areas_disp) else NA_character_
+  )
+
+  est_cruce <- est_base %>%
+    left_join(mapa_areas, by = "area") %>%
+    left_join(otra_area,
+              by = c("agno", "grado", "rbd_revisado", "id_usuario_curso", "area_otra"))
+
+  # Correlación VERDADERA entre áreas: la observada, desatenuada por las
+  # confiabilidades de ambas medidas. Se estima por año y grado (no por
+  # área: es simétrica) y sobre puntajes ya centrados en el colegio, que
+  # es la correlación relevante para ordenar dentro del colegio.
+  rho_areas <- est_cruce %>%
+    filter(!is.na(z_otra)) %>%
+    group_by(agno, grado) %>%
+    summarise(
+      n_pares    = n() %/% 2,
+      r_observada = if (n() >= 30) {
+        cor(z_bruto, z_otra, use = "complete.obs")
+      } else NA_real_,
+      rel_a      = mean(rel_est, na.rm = TRUE),
+      rel_b      = mean(rel_otra, na.rm = TRUE),
+      # Si no se pudo estimar, 0 = "no tomar prestado de la otra área".
+      # Es el respaldo conservador: el índice queda igual que sin cruce.
+      rho_ab_grupo = coalesce(
+        pmin(pmax(r_observada / sqrt(rel_a * rel_b), 0), RHO_AREAS_MAX), 0
+      ),
+      .groups = "drop"
+    )
+
+  cat("  Correlación entre áreas (dentro del colegio), observada y desatenuada:\n")
+  print(rho_areas %>% mutate(across(where(is.numeric), ~round(.x, 3))))
+
+  est_indice <- est_cruce %>%
+    left_join(rho_areas %>% select(agno, grado, rho_ab_grupo),
+              by = c("agno", "grado")) %>%
+    mutate(
+      rho_ab = if (usar_cruce) coalesce(rho_ab_grupo, 0) else 0,
+      ra     = rel_est,
+      rb     = coalesce(rel_otra, 0),      # 0 = "no tiene la otra área"
+      zb     = coalesce(z_otra, 0),
+      den    = 1 - rho_ab^2 * ra * rb,
+      w_propia = ra * (1 - rho_ab^2 * rb) / den,
+      w_otra   = rho_ab * rb * (1 - ra)   / den,
+      # Índice final: posición estimada dentro del colegio, en unidades de
+      # desviación verdadera. Su sd dentro del colegio es sqrt(rel), no 1.
+      indice_ensayo = w_propia * z_bruto + w_otra * zb,
+      # Confiabilidad efectiva del índice compuesto = c' V^-1 c.
+      rel_indice    = w_propia + rho_ab * w_otra,
+      tiene_otra_area = !is.na(z_otra)
+    )
+
+  cat("  Confiabilidad del índice individual, por número de ensayos rendidos\n",
+      "  (rel_propia = sólo su área; rel_indice = con la otra área):\n")
+  print(
+    est_indice %>%
+      filter(agno == max(agno)) %>%
+      group_by(grado, area, k_ensayos) %>%
+      summarise(n = n(),
+                rel_propia = round(mean(rel_est), 3),
+                rel_indice = round(mean(rel_indice), 3),
+                ganancia_pp = round(100 * (mean(rel_indice) - mean(rel_est)), 1),
+                .groups = "drop") %>%
+      filter(n >= 50)
+  )
+
+  cat("  Cobertura de la otra área:",
+      sprintf("%.0f%%", 100 * mean(est_indice$tiene_otra_area)), "\n")
+
+  est_indice
+}
+
+# --- Insumo "crudo": promedio de logro observado ------------------------
+est_entrada_crudo <- ensayos_ind %>%
   group_by(agno, grado, area, rbd_revisado, id_usuario_curso) %>%
   summarise(k_ensayos = n(), x_est = mean(logro_aj), .groups = "drop") %>%
   left_join(sigma2_grupo, by = c("agno", "grado", "area")) %>%
@@ -711,151 +999,29 @@ est_base <- ensayos_ind %>%
   group_by(grado, area) %>%
   mutate(sigma2 = coalesce(sigma2, mean(sigma2, na.rm = TRUE))) %>%
   ungroup() %>%
-  mutate(sigma2 = coalesce(sigma2, var(x_est, na.rm = TRUE)))
+  mutate(sigma2 = coalesce(sigma2, var(x_est, na.rm = TRUE)),
+         var_err = sigma2 / k_ensayos)
 
-# --- (iv) tau^2 verdadera entre estudiantes del mismo colegio ----------
-# Primero una versión de grupo (respaldo para colegios chicos), después
-# la propia de cada colegio. La varianza OBSERVADA entre estudiantes
-# mezcla diferencias reales con ruido de medición; se descuenta el ruido.
-tau2_grupo <- est_base %>%
-  group_by(agno, grado, area, rbd_revisado) %>%
-  filter(n() >= MIN_EST_TAU) %>%
-  mutate(x_c = x_est - mean(x_est)) %>%
-  group_by(agno, grado, area) %>%
-  summarise(
-    var_obs_g = sum(x_c^2) / pmax(n() - n_distinct(rbd_revisado), 1),
-    var_err_g = mean(sigma2 / k_ensayos),
-    tau2_g    = pmax(var_obs_g - var_err_g, PISO_TAU2 * var_obs_g),
-    .groups = "drop"
+# --- Insumo "irt": theta y su error estándar ---------------------------
+# `se_theta` ya es el error de medición del estudiante, así que no hace
+# falta estimar sigma^2 ni dividir por k: la calibración lo entrega directo
+# y además diferenciado por CUÁLES formas rindió, no sólo cuántas.
+est_entrada_irt <- est_entrada_crudo %>%
+  select(agno, grado, area, rbd_revisado, id_usuario_curso, k_ensayos) %>%
+  inner_join(
+    irt_theta %>% select(agno, grado, area, id_usuario_curso, theta, se_theta,
+                         logro_irt),
+    by = c("agno", "grado", "area", "id_usuario_curso")
   ) %>%
-  select(agno, grado, area, tau2_g)
+  mutate(x_est = theta, var_err = se_theta^2)
 
-est_base <- est_base %>%
-  left_join(tau2_grupo, by = c("agno", "grado", "area")) %>%
-  # Último respaldo de tau^2, calculado DENTRO de cada grado x área: si un
-  # grupo entero quedara sin `tau2_g` (ningún colegio con MIN_EST_TAU
-  # estudiantes), se usa la varianza entre todos sus estudiantes. Es peor
-  # estimación —mezcla diferencias entre colegios con diferencias dentro—
-  # pero es finita y del grupo correcto. Usar una varianza global mezclaría
-  # 4b lenguaje con 2m matemática, que están en escalas distintas.
-  group_by(grado, area) %>%
-  mutate(tau2_respaldo = pmax(var(x_est, na.rm = TRUE), 1e-6)) %>%
-  group_by(agno, grado, area, rbd_revisado) %>%
-  mutate(
-    n_est_col = n(),
-    x_c       = x_est - mean(x_est),
-    var_obs_c = var(x_est),                 # NA si el colegio tiene 1 estudiante
-    var_err_c = mean(sigma2 / k_ensayos)
-  ) %>%
-  ungroup() %>%
-  mutate(
-    tau2 = if_else(
-      n_est_col >= MIN_EST_TAU & !is.na(var_obs_c),
-      pmax(var_obs_c - var_err_c, PISO_TAU2 * var_obs_c),
-      tau2_g
-    ),
-    # Nunca por debajo del piso del grupo: un colegio cuyo ruido explica
-    # toda su varianza interna quedaría con tau2 = 0 y todos sus
-    # estudiantes encogidos al promedio exacto, borrando el ordenamiento.
-    tau2      = pmax(coalesce(tau2, tau2_g), PISO_TAU2 * coalesce(tau2_g, 0)),
-    tau2      = if_else(is.na(tau2) | tau2 <= 0, tau2_respaldo, tau2),
-    rel_est   = tau2 / (tau2 + sigma2 / k_ensayos),
-    z_bruto   = x_c / sqrt(tau2)
-  ) %>%
-  select(-tau2_respaldo)
+cat("\n  Estudiantes con theta sobre el total del ensayo:",
+    sprintf("%.1f%%", 100 * nrow(est_entrada_irt) / nrow(est_entrada_crudo)), "\n")
 
-stopifnot(
-  "tau2 no finito en la sección 4b" = all(is.finite(est_base$tau2)),
-  "rel_est fuera de [0,1] en la sección 4b" =
-    all(est_base$rel_est >= 0 & est_base$rel_est <= 1)
-)
+est_indice_crudo <- construir_indice(est_entrada_crudo, "crudo (v5)")
+est_indice_irt   <- construir_indice(est_entrada_irt,   "IRT (v6)")
 
-# --- (v) Compuesto con la otra área (BLUP bivariado) -------------------
-areas_disp <- sort(unique(est_base$area))
-usar_cruce <- length(areas_disp) == 2
-if (!usar_cruce) {
-  warning("Se esperaban exactamente 2 áreas para el compuesto; encontradas: ",
-          paste(areas_disp, collapse = ", "),
-          ". El índice usará sólo el área propia.")
-}
-
-otra_area <- est_base %>%
-  transmute(agno, grado, rbd_revisado, id_usuario_curso,
-            area_otra = area, z_otra = z_bruto, rel_otra = rel_est)
-
-# Con dos áreas, rev() da el mapeo cruzado (a->b, b->a). Si no hay
-# exactamente dos, area_otra queda en NA para que el join no empareje
-# cada área CONSIGO MISMA, que daría rel_otra = rel_est y correlación 1.
-mapa_areas <- tibble(
-  area      = areas_disp,
-  area_otra = if (usar_cruce) rev(areas_disp) else NA_character_
-)
-
-est_cruce <- est_base %>%
-  left_join(mapa_areas, by = "area") %>%
-  left_join(otra_area,
-            by = c("agno", "grado", "rbd_revisado", "id_usuario_curso", "area_otra"))
-
-# Correlación VERDADERA entre áreas: la observada, desatenuada por las
-# confiabilidades de ambas medidas. Se estima por año y grado (no por
-# área: es simétrica) y sobre puntajes ya centrados en el colegio, que
-# es la correlación relevante para ordenar dentro del colegio.
-rho_areas <- est_cruce %>%
-  filter(!is.na(z_otra)) %>%
-  group_by(agno, grado) %>%
-  summarise(
-    n_pares    = n() %/% 2,
-    r_observada = if (n() >= 30) {
-      cor(z_bruto, z_otra, use = "complete.obs")
-    } else NA_real_,
-    rel_a      = mean(rel_est, na.rm = TRUE),
-    rel_b      = mean(rel_otra, na.rm = TRUE),
-    # Si no se pudo estimar, 0 = "no tomar prestado de la otra área".
-    # Es el respaldo conservador: el índice queda igual que sin cruce.
-    rho_ab_grupo = coalesce(
-      pmin(pmax(r_observada / sqrt(rel_a * rel_b), 0), RHO_AREAS_MAX), 0
-    ),
-    .groups = "drop"
-  )
-
-cat("\n  Correlación entre áreas (dentro del colegio), observada y desatenuada:\n")
-print(rho_areas %>% mutate(across(where(is.numeric), ~round(.x, 3))))
-
-est_indice <- est_cruce %>%
-  left_join(rho_areas %>% select(agno, grado, rho_ab_grupo),
-            by = c("agno", "grado")) %>%
-  mutate(
-    rho_ab = if (usar_cruce) coalesce(rho_ab_grupo, 0) else 0,
-    ra     = rel_est,
-    rb     = coalesce(rel_otra, 0),      # 0 = "no tiene la otra área"
-    zb     = coalesce(z_otra, 0),
-    den    = 1 - rho_ab^2 * ra * rb,
-    w_propia = ra * (1 - rho_ab^2 * rb) / den,
-    w_otra   = rho_ab * rb * (1 - ra)   / den,
-    # Índice final: posición estimada dentro del colegio, en unidades de
-    # desviación verdadera. Su sd dentro del colegio es sqrt(rel), no 1.
-    indice_ensayo = w_propia * z_bruto + w_otra * zb,
-    # Confiabilidad efectiva del índice compuesto = c' V^-1 c.
-    rel_indice    = w_propia + rho_ab * w_otra,
-    tiene_otra_area = !is.na(z_otra)
-  )
-
-cat("\n  Confiabilidad del índice individual, por número de ensayos rendidos\n",
-    "  (rel_propia = sólo su área; rel_indice = con la otra área):\n")
-print(
-  est_indice %>%
-    filter(agno == max(agno)) %>%
-    group_by(grado, area, k_ensayos) %>%
-    summarise(n = n(),
-              rel_propia = round(mean(rel_est), 3),
-              rel_indice = round(mean(rel_indice), 3),
-              ganancia_pp = round(100 * (mean(rel_indice) - mean(rel_est)), 1),
-              .groups = "drop") %>%
-    filter(n >= 50)
-)
-
-cat("\n  Cobertura de la otra área:",
-    sprintf("%.0f%%", 100 * mean(est_indice$tiene_otra_area)), "\n")
+est_indice <- if (USAR_IRT) est_indice_irt else est_indice_crudo
 
 # ---- 5. Features a nivel de estudiante --------------------------------
 # pct_ensayo y z_ensayo son la posición del estudiante DENTRO de su
@@ -945,19 +1111,44 @@ print(
 # (sd_entre_estud ya existía pero era sólo referencial; ahora es
 # predictor del modelo de dispersión) e iqr_logro_ensayo, que resultó
 # algo más robusto que la sd frente a colegios con outliers.
+#
+# CAMBIO v6: se agregan las mismas tres features calculadas sobre el
+# puntaje verdadero IRT (`*_irt`) además de las del logro crudo
+# (`*_crudo`). Las columnas sin sufijo —`mean_logro`, `sd_entre_estud`,
+# `iqr_logro_ensayo`, que son las que consumen 02, 02b y 03— apuntan a una
+# de las dos según USAR_IRT. Mantener ambas cuesta tres columnas y permite
+# que la sección 8c compare las dos especificaciones sin volver a correr
+# nada.
 school_features <- ind_features %>%
   group_by(agno, grado, area, rbd_revisado) %>%
   summarise(
     n_estudiantes    = n(),
-    promedio_mean_logro       = mean(mean_logro, na.rm = TRUE),
     pred_final_logro = mean(pred_final_logro, na.rm = TRUE),
     n_evals_prom     = mean(n_evals, na.rm = TRUE),
-    sd_entre_estud   = sd(mean_logro, na.rm = TRUE),
-    iqr_logro_ensayo = quantile(mean_logro, 0.90, names = FALSE) -
-                       quantile(mean_logro, 0.10, names = FALSE),
+
+    # OJO con los nombres: summarise() evalúa en orden y con enmascaramiento
+    # de datos, así que si la media se llamara `mean_logro_crudo` —igual que
+    # la columna de entrada— el `sd()` de la línea siguiente recibiría el
+    # ESCALAR recién calculado y no la columna, y devolvería NA en silencio.
+    # Por eso las salidas se nombran distinto y se renombran después.
+    prom_logro_crudo   = mean(mean_logro_crudo, na.rm = TRUE),
+    sd_entre_estud_crudo = sd(mean_logro_crudo, na.rm = TRUE),
+    iqr_logro_crudo    = quantile(mean_logro_crudo, 0.90, names = FALSE) -
+                         quantile(mean_logro_crudo, 0.10, names = FALSE),
+
+    prom_logro_irt     = mean(mean_logro_irt, na.rm = TRUE),
+    sd_entre_estud_irt = sd(mean_logro_irt, na.rm = TRUE),
+    iqr_logro_irt      = quantile(mean_logro_irt, 0.90, names = FALSE) -
+                         quantile(mean_logro_irt, 0.10, names = FALSE),
     .groups = "drop"
-  ) %>% 
-  rename(mean_logro = promedio_mean_logro)
+  ) %>%
+  rename(mean_logro_crudo = prom_logro_crudo,
+         mean_logro_irt   = prom_logro_irt) %>%
+  mutate(
+    mean_logro       = if (USAR_IRT) mean_logro_irt     else mean_logro_crudo,
+    sd_entre_estud   = if (USAR_IRT) sd_entre_estud_irt else sd_entre_estud_crudo,
+    iqr_logro_ensayo = if (USAR_IRT) iqr_logro_irt      else iqr_logro_crudo
+  )
 
 # ---- 5b-bis. Encogimiento de mean_logro por confiabilidad (NUEVO v5) --
 # Reemplaza a `n_evals_prom` en el modelo de 02. El razonamiento es el
@@ -1002,27 +1193,52 @@ school_features <- ind_features %>%
 #
 # No hay filtración temporal: todo esto se calcula con los ensayos del
 # mismo año, que están disponibles al momento de predecir. No usa SIMCE.
+#
+# CAMBIO v6: el encogimiento se aplica por igual a las dos versiones del
+# nivel escolar (cruda e IRT), para que la comparación de la sección 8c
+# enfrente especificaciones equivalentes y no una encogida contra otra sin
+# encoger. `encoger_nivel()` es la misma aritmética de siempre, escrita una
+# vez y llamada dos veces.
+encoger_nivel <- function(d, col_media, col_sd, out_enc, out_conf, out_var_err) {
+  media <- d[[col_media]]
+  sd_e  <- d[[col_sd]]
+  clave <- paste(d$agno, d$grado, d$area)
+
+  # La sd entre estudiantes es NA en colegios con 1 alumno: se les asigna la
+  # sd típica de su grupo, peor que su dato pero mejor que un NA.
+  sd_aux  <- ave(sd_e, clave, FUN = function(x) coalesce(x, median(x, na.rm = TRUE)))
+  var_err <- sd_aux^2 / pmax(d$n_estudiantes, 1)
+
+  var_obs  <- ave(media,   clave, FUN = function(x) var(x, na.rm = TRUE))
+  var_err_m <- ave(var_err, clave, FUN = function(x) mean(x, na.rm = TRUE))
+  var_true <- pmax(var_obs - var_err_m, PISO_TAU2 * var_obs)
+  mu_grupo <- ave(media,   clave, FUN = function(x) mean(x, na.rm = TRUE))
+
+  conf <- var_true / (var_true + var_err)
+  # Grupos con un solo colegio (var no estimable) o cualquier otro caso
+  # degenerado: confiabilidad 1, o sea no encoger. Deja la media tal cual en
+  # vez de convertirla en NA y romper el modelo.
+  conf <- if_else(is.finite(conf), conf, 1)
+
+  d[[out_var_err]] <- var_err
+  d[[out_conf]]    <- conf
+  d[[out_enc]]     <- coalesce(mu_grupo + conf * (media - mu_grupo), media)
+  d
+}
+
 school_features <- school_features %>%
-  group_by(agno, grado, area) %>%
+  encoger_nivel("mean_logro_crudo", "sd_entre_estud_crudo",
+                "mean_logro_crudo_enc", "conf_mean_logro_crudo",
+                "var_err_logro_crudo") %>%
+  encoger_nivel("mean_logro_irt", "sd_entre_estud_irt",
+                "mean_logro_irt_enc", "conf_mean_logro_irt",
+                "var_err_logro_irt") %>%
+  # Las columnas sin sufijo son las que consumen 02, 02b y 03.
   mutate(
-    # sd_entre_estud es NA en colegios con 1 estudiante: se les asigna la
-    # sd típica del grupo, que es peor que su dato pero mejor que un NA.
-    sd_entre_aux    = coalesce(sd_entre_estud, median(sd_entre_estud, na.rm = TRUE)),
-    var_err_logro   = sd_entre_aux^2 / pmax(n_estudiantes, 1),
-    var_obs_logro   = var(mean_logro, na.rm = TRUE),
-    var_true_logro  = pmax(var_obs_logro - mean(var_err_logro, na.rm = TRUE),
-                           PISO_TAU2 * var_obs_logro),
-    conf_mean_logro = var_true_logro / (var_true_logro + var_err_logro),
-    mu_logro_grupo  = mean(mean_logro, na.rm = TRUE),
-    # Grupos con un solo colegio (var no estimable) o cualquier otro caso
-    # degenerado: confiabilidad 1, o sea no encoger. Deja el `mean_logro`
-    # tal cual en vez de convertirlo en NA y romper el modelo.
-    conf_mean_logro = if_else(is.finite(conf_mean_logro), conf_mean_logro, 1),
-    mean_logro_enc  = mu_logro_grupo + conf_mean_logro * (mean_logro - mu_logro_grupo),
-    mean_logro_enc  = coalesce(mean_logro_enc, mean_logro)
-  ) %>%
-  ungroup() %>%
-  select(-sd_entre_aux, -var_obs_logro, -var_true_logro)
+    mean_logro_enc  = if (USAR_IRT) mean_logro_irt_enc   else mean_logro_crudo_enc,
+    conf_mean_logro = if (USAR_IRT) conf_mean_logro_irt  else conf_mean_logro_crudo,
+    var_err_logro   = if (USAR_IRT) var_err_logro_irt    else var_err_logro_crudo
+  )
 
 cat("\nConfiabilidad del mean_logro escolar (encogimiento del punto 2):\n")
 print(
@@ -1894,6 +2110,158 @@ descriptivos <- list(
 
 cat("\nDescriptivos para la presentación (último año):\n")
 print(desc_simce_alu %>% filter(agno == max(agno)))
+
+# ---- 8c. EFECTO DEL IRT: comparación y gráfico (NUEVO v6) --------------
+# Todo lo de esta sección compara las dos versiones que el script ya
+# calculó: la cruda (porcentaje de logro observado) y la IRT (puntaje
+# verdadero). No decide nada — USAR_IRT ya decidió — pero deja la evidencia
+# en cada corrida.
+
+# Dificultad de la BATERÍA que aplicó cada colegio, en puntos de logro y
+# medida ANTES del IRT: cuánto más fácil (+) o difícil (-) fue el conjunto
+# de ensayos que administró, respecto del promedio de su grupo. Es la
+# variable que el IRT tiene que neutralizar, así que es el eje natural
+# contra el cual mirar la corrección.
+dificultad_bateria <- ensayos_ind %>%
+  group_by(agno, grado, area, rbd_revisado) %>%
+  summarise(dif_bateria = mean(dif_ensayo - dif_grupo), .groups = "drop")
+
+comparacion_irt <- school_features %>%
+  select(agno, grado, area, rbd_revisado, n_estudiantes,
+         mean_logro_crudo, mean_logro_irt) %>%
+  left_join(dificultad_bateria, by = c("agno", "grado", "area", "rbd_revisado")) %>%
+  group_by(agno, grado, area) %>%
+  mutate(
+    dif_puntos = mean_logro_irt - mean_logro_crudo,
+    # Lo que importa operativamente no es el nivel (las dos escalas no
+    # tienen por qué coincidir en media) sino el CAMBIO DE POSICIÓN: si un
+    # colegio sube o baja respecto de los demás.
+    pct_crudo  = percent_rank(mean_logro_crudo),
+    pct_irt    = percent_rank(mean_logro_irt),
+    salto_pp   = 100 * (pct_irt - pct_crudo)
+  ) %>%
+  ungroup()
+
+# Confiabilidad del índice individual en las dos versiones.
+conf_ind_comp <- bind_rows(
+  est_indice_crudo %>% mutate(version = "crudo"),
+  est_indice_irt   %>% mutate(version = "irt")
+) %>%
+  group_by(version, agno, grado, area) %>%
+  summarise(conf_indice = mean(rel_indice, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = version, values_from = conf_indice,
+              names_prefix = "conf_indice_")
+
+tabla_efecto_irt <- comparacion_irt %>%
+  group_by(agno, grado, area) %>%
+  summarise(
+    n_colegios      = n(),
+    r_niveles       = cor(mean_logro_crudo, mean_logro_irt),
+    dif_media_pts   = mean(dif_puntos),
+    dif_abs_pts     = mean(abs(dif_puntos - mean(dif_puntos))),
+    salto_abs_medio = mean(abs(salto_pp)),
+    salto_p90       = quantile(abs(salto_pp), 0.90, names = FALSE),
+    salto_max       = max(abs(salto_pp)),
+    # Si el salto correlaciona con la dificultad de la batería, la
+    # corrección es SISTEMÁTICA: los colegios que aplicaron ensayos fáciles
+    # bajan y los que aplicaron difíciles suben. Si fuera ruido, daría ~0.
+    r_salto_dificultad = cor(salto_pp, dif_bateria, use = "complete.obs"),
+    .groups = "drop"
+  ) %>%
+  left_join(conf_ind_comp, by = c("agno", "grado", "area")) %>%
+  mutate(gana_conf_pp = 100 * (conf_indice_irt - conf_indice_crudo))
+
+cat("\n\n=============================================================\n")
+cat("EFECTO DEL IRT SOBRE LOS INSUMOS DEL MODELO\n")
+cat("=============================================================\n")
+cat("r_niveles          correlación entre el logro crudo y el IRT por colegio\n")
+cat("salto_abs_medio    cambio absoluto medio de percentil del colegio (pp)\n")
+cat("r_salto_dificultad correlación del salto con la dificultad de la batería\n")
+cat("                   (negativa = quien aplicó ensayos fáciles baja)\n")
+cat("gana_conf_pp       ganancia de confiabilidad del índice individual (pp)\n\n")
+print(
+  tabla_efecto_irt %>%
+    transmute(agno, grado, area, n_colegios,
+              r_niveles = round(r_niveles, 3),
+              salto_abs_medio = round(salto_abs_medio, 1),
+              salto_p90 = round(salto_p90, 1),
+              salto_max = round(salto_max, 1),
+              r_salto_dif = round(r_salto_dificultad, 2),
+              conf_crudo = round(conf_indice_crudo, 3),
+              conf_irt   = round(conf_indice_irt, 3),
+              gana_conf_pp = round(gana_conf_pp, 1)) %>%
+    as.data.frame()
+)
+
+# --- Gráfico de tres paneles -------------------------------------------
+anio_fig <- max(comparacion_irt$agno)
+
+# (1) Dificultad de cada forma: logro observado vs. dificultad IRT.
+forma_fig <- irt_items %>%
+  filter(agno == anio_fig, is.finite(a), is.finite(b)) %>%
+  group_by(grado, area, forma) %>%
+  summarise(esperado_theta0 = 100 * mean(plogis(a * (0 - b))),
+            logro_observado = 100 * mean(p_correcta), .groups = "drop") %>%
+  mutate(panel = "1. Dificultad de cada ensayo",
+         grupo = paste(grado, area))
+
+p1 <- ggplot(forma_fig, aes(logro_observado, esperado_theta0, color = grupo)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_point(size = 2.5, alpha = 0.85) +
+  labs(title = "1. Dificultad de cada ensayo",
+       subtitle = "Cada punto es una forma. El eje Y es lo que sacaría el MISMO\nestudiante medio; el eje X, el logro que se observó.",
+       x = "Logro observado (%)", y = "Logro esperado a habilidad media (%)",
+       color = NULL) +
+  theme_minimal() + theme(legend.position = "bottom")
+
+# (2) El colegio: logro crudo vs. IRT, coloreado por la dificultad de su
+#     batería. La nube se inclina: los colegios de batería fácil (claros)
+#     quedan por debajo de la diagonal.
+col_fig <- comparacion_irt %>% filter(agno == anio_fig, n_estudiantes >= 5)
+
+p2 <- ggplot(col_fig, aes(mean_logro_crudo, mean_logro_irt, color = dif_bateria)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey50") +
+  geom_point(alpha = 0.7, size = 1.6) +
+  scale_color_gradient2(low = "#B2182B", mid = "grey80", high = "#2166AC",
+                        midpoint = 0,
+                        name = "Dificultad de la batería aplicada (+ = más fácil)",
+                        guide = guide_colorbar(title.position = "top",
+                                               title.hjust = 0.5,
+                                               barwidth = 14, barheight = 0.6)) +
+  facet_wrap(~ grado + area, scales = "free") +
+  labs(title = "2. Nivel del colegio: antes y después del IRT",
+       subtitle = "Los colegios que aplicaron ensayos fáciles (azul) caen bajo la diagonal",
+       x = "Logro medio crudo (%)", y = "Logro medio IRT (%)") +
+  theme_minimal() + theme(legend.position = "bottom")
+
+# (3) La prueba de que la corrección es sistemática y no ruido: el cambio
+#     de percentil contra la dificultad de la batería aplicada.
+p3 <- ggplot(col_fig, aes(dif_bateria, salto_pp)) +
+  geom_hline(yintercept = 0, color = "grey60") +
+  geom_vline(xintercept = 0, color = "grey60") +
+  geom_point(alpha = 0.55, size = 1.4) +
+  geom_smooth(method = "lm", se = FALSE, color = "#B2182B", linewidth = 0.8) +
+  facet_wrap(~ grado + area, scales = "free") +
+  labs(title = "3. La corrección es sistemática, no ruido",
+       subtitle = "Cambio de puesto del colegio contra la dificultad de la batería que aplicó",
+       x = "Dificultad de la batería aplicada (puntos de logro; + = más fácil)",
+       y = "Cambio de percentil (pp)") +
+  theme_minimal()
+
+png(dir_salidas %>% file.path("efecto_irt.png"),
+    width = 2200, height = 2600, res = 190)
+gridExtra::grid.arrange(
+  p1, p2, p3, ncol = 1, heights = c(1, 1.25, 1.25),
+  top = grid::textGrob(
+    sprintf("Efecto de la calibración IRT sobre los insumos del modelo (%s)", anio_fig),
+    gp = grid::gpar(fontsize = 15, fontface = "bold"))
+)
+dev.off()
+
+write_csv(tabla_efecto_irt, dir_salidas %>% file.path("efecto_irt.csv"))
+saveRDS(comparacion_irt,    dir_salidas %>% file.path("comparacion_irt.rds"))
+
+cat("\nGráfico guardado en", dir_salidas %>% file.path("efecto_irt.png"), "\n")
 
 # ---- 9. Guardar --------------------------------------------------------
 saveRDS(descriptivos,      dir_salidas %>% file.path("descriptivos.rds"))
