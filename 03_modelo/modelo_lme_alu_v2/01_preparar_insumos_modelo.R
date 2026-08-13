@@ -193,42 +193,30 @@ dir_salidas %>% dir.create(showWarnings = FALSE)
 
 # Parámetros -------------------------------------------------------
 # Mínimo de alumnos con SIMCE para que la sd interna del colegio sea
-# una estimación utilizable (con n<15 la sd muestral es muy ruidosa:
-# su error relativo es ~1/sqrt(2(n-1))).
+# una estimación utilizable
 MIN_ALU_SD    <- 15
 GRADOS_MODELO <- c("4b", "2m")   # los únicos con ensayo Santillana
 # Grilla de percentiles con que se guarda la plantilla de forma.
 GRILLA_P      <- seq(0.005, 0.995, by = 0.005)
 
 # --- Parámetros del índice individual encogido (sección 4b, v5) ---------
+
+AJUSTAR_DIFICULTAD <- FALSE
 # Mínimo de estudiantes para estimar la varianza verdadera entre alumnos
 # DENTRO de un colegio. Bajo este umbral se usa la del grupo completo.
 MIN_EST_TAU        <- 5
+
 # Piso para tau^2 como fracción de la varianza observada: evita que un
 # colegio donde el ruido explica toda la varianza quede con tau^2 = 0 y,
 # por lo tanto, con todos sus estudiantes encogidos exactamente al
 # promedio (lo que borraría el ordenamiento interno).
 PISO_TAU2          <- 0.05
+
 # Techo para la correlación verdadera entre áreas. La desatenuación
 # divide por confiabilidades estimadas, y si éstas quedan bajas puede
 # producir correlaciones > 1, que no significan nada.
 RHO_AREAS_MAX      <- 0.95
-# Ajustar el logro por la dificultad específica de cada ensayo antes de
-# construir el índice. Está en FALSE porque NO fue parte del cambio
-# pedido y porque su efecto medido es chico: los estudiantes de un mismo
-# colegio rinden casi siempre los mismos ensayos (la sd dentro del
-# colegio de la dificultad del set rendido es 0.8-1.1 puntos de logro,
-# contra 12-16 de sd del logro entre estudiantes). Se deja implementado
-# porque protege contra un año en que las mezclas sí se desbalanceen, y
-# el script imprime igual la comparación para poder auditarlo.
-#
-# OJO si se activa: sólo afecta al ÍNDICE INDIVIDUAL de la sección 4b.
-# `mean_logro` (sección 3, y de ahí el `mean_logro` de colegio que usa
-# 02) se sigue calculando sobre el logro crudo. Poniéndolo en TRUE, las
-# dos cosas dejan de estar en la misma escala. No es un error —el índice
-# sólo se usa para ordenar DENTRO del colegio, y ahí el ajuste es lo
-# correcto— pero conviene saberlo antes de comparar ambas columnas.
-AJUSTAR_DIFICULTAD <- FALSE
+
 # Mínimo de observaciones para creerle a la dificultad estimada de un
 # ensayo. Hay casos degenerados en los datos (4b matemática 2024, ensayo
 # 3, tiene 54 observaciones); esos vuelven al promedio del grupo.
@@ -245,6 +233,7 @@ etiquetas_gse <- tibble(
   cod_grupo = 1:5,
   gse_etiqueta = c("Bajo", "Medio bajo", "Medio", "Medio alto", "Alto")
 )
+
 etiquetas_depe1 <- tibble(
   cod_depe1 = 1:6,
   depe1_etiqueta = c("Municipal Corporación", "Municipal DAEM",
@@ -252,11 +241,13 @@ etiquetas_depe1 <- tibble(
                      "Corporación de administración delegada",
                      "Servicio Local de Educación")
 )
+
 etiquetas_depe2 <- tibble(
   cod_depe2 = 1:4,
   depe2_etiqueta = c("Municipal", "Particular subvencionado",
                      "Particular pagado", "Servicio Local de Educación")
 )
+
 etiquetas_rural <- tibble(
   cod_rural_rbd = 1:2,
   rural_etiqueta = c("Urbano", "Rural")
@@ -269,6 +260,7 @@ preparar_factores <- function(d) {
     f_rural = factor(as.character(as.integer(cod_rural_rbd)), levels = NIVELES_RURAL)
   )
 }
+
 contexto_completo <- function(d) {
   !is.na(d$f_gse) & !is.na(d$f_depe) & !is.na(d$f_rural)
 }
@@ -293,10 +285,9 @@ simce <- simce0_rbd %>%
   filter(!outlier_iqr, !outlier_isoforest)
 
 ## SIMCE POR ALUMNO (NUEVO) ----
-# Si el archivo está en otra carpeta, ajustar esta ruta.
 ruta_alu <- ruta_data_intermedia %>%
   file.path('simce', 'consolidado_datos_simce_alu.parquet')
-stopifnot("No se encuentra consolidado_datos_simce_alu.parquet" = file.exists(ruta_alu))
+
 simce_alu0 <- read_parquet(ruta_alu)
 
 # ---- 2. Limpieza de ensayos -----------------------------------------
@@ -439,19 +430,17 @@ ensayos_dedup <- ensayos_limpio %>%
 # que calce con la llave (agno, grado, area, rbd_revisado) del resto
 # del pipeline. Se descartan puntajes ausentes (~20% de las filas: son
 # alumnos matriculados que no rindieron o quedaron excluidos).
-base_alu <- simce_alu0 %>%
+simce_alumno <- simce_alu0 %>%
   filter(grado %in% GRADOS_MODELO) %>%
-  mutate(agno = as.numeric(agno), rbd_revisado = as.numeric(rbd))
+  mutate(agno = as.numeric(agno), 
+         rbd_revisado = as.numeric(rbd)) %>% 
+  pivot_longer(cols = c(ptje_mate, ptje_lect, eem_mate, eem_lect, eda_mate, eda_lect),
+               names_sep = '_',
+               names_to = c('.value', 'area')
+               ) %>% 
+  mutate(area = ifelse(area == 'mate', 'matematica', 'lenguaje'))
 
-simce_alumno <- bind_rows(
-  base_alu %>% transmute(agno, grado, rbd_revisado, idalumno,
-                         area = "matematica", ptje = ptje_mate, eem = eem_mate),
-  base_alu %>% transmute(agno, grado, rbd_revisado, idalumno,
-                         area = "lenguaje",   ptje = ptje_lect, eem = eem_lect)
-) %>%
-  filter(!is.na(ptje), ptje > 0)
-
-rm(base_alu, simce_alu0); gc()
+rm(simce_alu0); gc()
 
 cat("SIMCE individual cargado:", nrow(simce_alumno), "puntajes alumno x área\n")
 
@@ -462,13 +451,13 @@ simce_dist <- simce_alumno %>%
   group_by(agno, grado, area, rbd_revisado) %>%
   summarise(
     n_alu_simce     = n(),
-    media_simce_alu = mean(ptje),
-    sd_simce        = sd(ptje),
-    p10_simce       = quantile(ptje, 0.10, names = FALSE),
-    p25_simce       = quantile(ptje, 0.25, names = FALSE),
-    p50_simce       = quantile(ptje, 0.50, names = FALSE),
-    p75_simce       = quantile(ptje, 0.75, names = FALSE),
-    p90_simce       = quantile(ptje, 0.90, names = FALSE),
+    media_simce_alu = mean(ptje, na.rm = TRUE),
+    sd_simce        = sd(ptje, na.rm = TRUE),
+    p10_simce       = quantile(ptje, 0.10, names = FALSE, na.rm = TRUE),
+    p25_simce       = quantile(ptje, 0.25, names = FALSE, na.rm = TRUE),
+    p50_simce       = quantile(ptje, 0.50, names = FALSE, na.rm = TRUE),
+    p75_simce       = quantile(ptje, 0.75, names = FALSE, na.rm = TRUE),
+    p90_simce       = quantile(ptje, 0.90, names = FALSE, na.rm = TRUE),
     eem_medio       = mean(eem, na.rm = TRUE),  # error de medición del test
     .groups = "drop"
   ) %>%
@@ -477,13 +466,11 @@ simce_dist <- simce_alumno %>%
 # Rango plausible de puntajes por grado/área: se usa para acotar las
 # predicciones individuales (no tiene sentido predecir 500 puntos).
 limites_simce <- simce_alumno %>%
+  filter(!is.na(ptje)) %>% 
   group_by(grado, area) %>%
   summarise(
-    n(),
-    ptje_min0 = min(ptje),
-    ptje_max0 = max(ptje),
-    ptje_min = quantile(ptje, 0.001, names = FALSE),
-    ptje_max = quantile(ptje, 0.999, names = FALSE),
+    ptje_min = quantile(ptje, 0.0001, names = FALSE),
+    ptje_max = quantile(ptje, 0.9999, names = FALSE),
     .groups = "drop"
   )
 
@@ -525,10 +512,8 @@ resumen_simple <- ensayos_dedup %>%
   )
 
 # ---- 4. Modelo de crecimiento por estudiante (lme4) -------------------
-# (Sin cambios de diseño respecto a la v2: pendiente aleatoria por
-# COLEGIO e intercepto aleatorio por estudiante, porque ~27% de los
-# estudiantes rinde un solo ensayo y una pendiente individual no es
-# identificable.)
+# pendiente aleatoria por COLEGIO e intercepto aleatorio por estudiante, porque ~27% de los
+# estudiantes rinde un solo ensayo y una pendiente individual no es identificable.)
 #
 # NUEVO: además de pred_final_logro (acotado a [0,100]) se devuelve
 # `pred_final_logro_raw`, sin acotar, y `nivel_est` (el intercepto
@@ -536,8 +521,9 @@ resumen_simple <- ensayos_dedup %>%
 # genera EMPATES en los extremos, lo que arruinaría el ranking dentro
 # del colegio: para ordenar estudiantes se usa la versión sin acotar.
 ajustar_crecimiento_grupo <- function(datos_grupo) {
+  
   modelo <- lmer(
-    porcentaje_logro ~ n_evaluacion + (1 + n_evaluacion | rbd_revisado) + (1 | id_usuario_curso),
+    porcentaje_logro ~ (1 | rbd_revisado) + (1 | id_usuario_curso),
     data = datos_grupo,
     control = lmerControl(optimizer = "bobyqa")
   )
@@ -548,8 +534,7 @@ ajustar_crecimiento_grupo <- function(datos_grupo) {
     rownames_to_column("rbd_revisado") %>%
     transmute(
       rbd_revisado        = as.numeric(rbd_revisado),
-      colegio_intercepto  = `(Intercept)`,
-      colegio_slope       = n_evaluacion
+      colegio_intercepto  = `(Intercept)`
     )
 
   ranef(modelo)$id_usuario_curso %>%
@@ -562,12 +547,10 @@ ajustar_crecimiento_grupo <- function(datos_grupo) {
     left_join(efecto_colegio, by = "rbd_revisado") %>%
     mutate(
       intercepto_hat       = fe[["(Intercept)"]] + colegio_intercepto + estudiante_intercepto,
-      slope_hat            = fe[["n_evaluacion"]] + colegio_slope,
-      pred_final_logro_raw = intercepto_hat + slope_hat * 6,
-      pred_final_logro     = pmin(pmax(pred_final_logro_raw, 0), 100),
+      pred_final_logro     = pmin(pmax(intercepto_hat, 0), 100),
       nivel_est            = estudiante_intercepto
     ) %>%
-    select(id_usuario_curso, slope_hat, pred_final_logro, pred_final_logro_raw, nivel_est)
+    select(id_usuario_curso, pred_final_logro, nivel_est)
 }
 
 grupos_crecimiento <- ensayos_dedup %>% distinct(agno, grado, area)
@@ -581,7 +564,14 @@ crecimiento_individual <- map_dfr(seq_len(nrow(grupos_crecimiento)), function(i)
   datos_grupo <- ensayos_dedup %>% filter(agno == a, grado == g, area == ar)
   ajustar_crecimiento_grupo(datos_grupo) %>%
     mutate(agno = a, grado = g, area = ar)
-})
+}) %>% 
+  left_join(ensayos_dedup %>% 
+              group_by(id_usuario_curso, agno, grado, area) %>% 
+              summarise(porcentaje_logro = mean(porcentaje_logro, na.rm = TRUE),
+                        n_ensayos = n(),
+                        .groups = 'drop'), 
+            by = c('id_usuario_curso', 'agno', 'grado', 'area'))
+
 
 # ---- 4b. ÍNDICE INDIVIDUAL ENCOGIDO POR CONFIABILIDAD (NUEVO v5) ------
 # Reemplaza a `pred_final_logro_raw` como base del ordenamiento de los
@@ -589,11 +579,7 @@ crecimiento_individual <- map_dfr(seq_len(nrow(grupos_crecimiento)), function(i)
 #
 #   (a) No todos los estudiantes están medidos con la misma precisión.
 #       El 15-22% rinde UN solo ensayo, y su promedio es mucho más
-#       ruidoso que el de uno que rindió seis. Con la ventana de
-#       ensayos partida por la mitad (impares para predecir pares), la
-#       correlación va de ~0.50 con un ensayo a ~0.69 con tres en 2m, y
-#       de ~0.68 a ~0.84 en 4b: la calidad de la medida varía casi por
-#       un factor de dos. Antes esto entraba al modelo de colegio como
+#       ruidoso que el de uno que rindió seis. Antes esto entraba al modelo de colegio como
 #       `n_evals_prom` sumado linealmente, que no es donde el número de
 #       ensayos actúa.
 #
@@ -888,15 +874,13 @@ ind_features <- resumen_simple %>%
     crecimiento_individual,
     by = c("id_usuario_curso", "agno", "grado", "area")
   ) %>%
-  rename(slope_logro = slope_hat) %>%
   left_join(
     est_indice %>%
       select(agno, grado, area, rbd_revisado, id_usuario_curso,
              k_ensayos, indice_ensayo, rel_indice, rel_est, z_bruto,
              tiene_otra_area),
     by = c("agno", "grado", "area", "rbd_revisado", "id_usuario_curso")
-  ) %>%
-  mutate(indice_v4_legado = pred_final_logro_raw)
+  ) 
 
 # El índice debe existir para todos: ambas tablas salen de `ensayos_dedup`
 # con la misma llave. Si esto falla, hay un problema de duplicados aguas
@@ -921,10 +905,10 @@ ind_features <- ind_features %>%
     # Con menos de 3 estudiantes el centrado no significa nada: 0.
     z_ensayo = if (n() >= 3) indice_ensayo else 0,
     # Versión v4 del ordenamiento, sólo para auditar el cambio.
-    z_ensayo_v4 = if (n() >= 3 && sd(indice_v4_legado) > 0) {
-      (indice_v4_legado - mean(indice_v4_legado)) / sd(indice_v4_legado)
+    z_ensayo_v4 = if (n() >= 3 && sd(pred_final_logro) > 0) {
+      (pred_final_logro - mean(pred_final_logro)) / sd(pred_final_logro)
     } else 0,
-    pct_ensayo_v4 = (rank(indice_v4_legado, ties.method = "average") - 0.5) / n()
+    pct_ensayo_v4 = (rank(pred_final_logro, ties.method = "average") - 0.5) / n()
   ) %>%
   ungroup()
 
@@ -954,7 +938,6 @@ school_features <- ind_features %>%
     n_estudiantes    = n(),
     promedio_mean_logro       = mean(mean_logro, na.rm = TRUE),
     pred_final_logro = mean(pred_final_logro, na.rm = TRUE),
-    slope_logro      = mean(slope_logro, na.rm = TRUE),
     n_evals_prom     = mean(n_evals, na.rm = TRUE),
     sd_entre_estud   = sd(mean_logro, na.rm = TRUE),
     iqr_logro_ensayo = quantile(mean_logro, 0.90, names = FALSE) -
