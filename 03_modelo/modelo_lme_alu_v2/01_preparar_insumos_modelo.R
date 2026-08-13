@@ -300,18 +300,17 @@ ensayos_limpio <- ensayos %>%
   filter(!is.na(rbd_revisado), !is.na(n_evaluacion), porcentaje_logro > 0)
 
 # Agregar ponderación porcentaje de logro  ----
-ponderar_logro_mate <- read_parquet(
-  paste0(
-    ruta_data_intermedia
-    ,"tab_resumen_irt_matematica.parquet"
-  )
-)
-ponderar_logro_leng <- read_parquet(
-  paste0(
-    ruta_data_intermedia
-    ,"tab_resumen_irt_lenguaje.parquet"
-  )
-)
+# NOTA: con file.path() y no paste0(). En config.yml unos perfiles traen la
+# ruta terminada en "/" y otros no; con paste0() el script sólo corre en los
+# primeros (en el perfil `Usuario` producía
+# ".../data_intermediatab_resumen_irt_matematica.parquet" y abortaba).
+ponderar_logro_mate <- ruta_data_intermedia %>%
+  file.path("tab_resumen_irt_matematica.parquet") %>%
+  read_parquet()
+
+ponderar_logro_leng <- ruta_data_intermedia %>%
+  file.path("tab_resumen_irt_lenguaje.parquet") %>%
+  read_parquet()
 # Crear variale de ensayo para hacer cruce 
 ensayos_limpio<-ensayos_limpio |> 
   mutate(
