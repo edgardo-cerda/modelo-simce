@@ -356,3 +356,8 @@ cat("  - resultados_simce_rbd_corregido.csv   (datos corregidos + outlier_iqr + 
 cat("  - ensayos_santillana_corregido.csv     (datos corregidos + outlier_iqr + outlier_isoforest)\n")
 cat("  - log_correcciones_resultados.csv      (detalle de cada corrección aplicada)\n")
 cat("  - log_correcciones_ensayos.csv         (detalle de cada corrección aplicada)\n")
+
+# Limpiar ambiente
+gc()
+rm(list=ls())
+

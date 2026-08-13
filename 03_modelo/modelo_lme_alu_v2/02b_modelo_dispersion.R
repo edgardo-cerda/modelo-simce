@@ -317,3 +317,4 @@ write_csv(tabla_sd, dir_salidas %>% file.path("metricas_dispersion.csv"))
 
 cat("\nListo. Modelos de dispersión en output/modelo_lme/modelos_dispersion.rds\n")
 cat("Métricas en output/modelo_lme/metricas_dispersion.csv\n")
+

@@ -50,7 +50,7 @@ ruta_data_in <- rutas$ruta_data_in
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 ruta_outputs <- rutas$ruta_outputs
 
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme')
 dir_salidas %>% dir.create(showWarnings = FALSE)
 
 # ---- 1. Cargar datos -----------------------------------------------
@@ -84,7 +84,130 @@ ensayos_limpio <- ensayos %>%
     # puntaje extra/errores de origen); se acota a 100.
     porcentaje_logro = pmin(porcentaje_logro, 100)
   ) %>%
-  filter(!is.na(rbd_revisado), !is.na(ensayo_num))
+  filter(!is.na(rbd_revisado), !is.na(ensayo_num),!is.na(porcentaje_logro))
+
+
+
+# Agregar ponderación porcentaje de logro  ----
+ponderar_logro_mate <- read_parquet(
+  paste0(
+    ruta_data_intermedia
+    ,"tab_resumen_irt_matematica.parquet"
+  )
+)
+ponderar_logro_leng <- read_parquet(
+  paste0(
+    ruta_data_intermedia
+    ,"tab_resumen_irt_lenguaje.parquet"
+  )
+)
+# Crear variale de ensayo para hacer cruce 
+ensayos_limpio<-ensayos_limpio |> 
+  mutate(
+    n_ensayo = as.numeric(str_extract(evaluacion,"\\d")) 
+  ) |> 
+  left_join(
+    ponderar_logro_mate |> 
+      select(
+        n_ensayo
+        ,"mean_dffclt_mate"=mean_dffclt
+      ) |> 
+      mutate(
+        area = "matematica"
+      ),by = c("n_ensayo","area")
+  ) |>
+  left_join(
+    ponderar_logro_leng |> 
+      select(
+        n_ensayo
+        ,"mean_dffclt_leng"=mean_dffclt
+      ) |> 
+      mutate(
+        area = "lenguaje"
+      ),by = c("n_ensayo","area")
+  )
+
+# ponderar puntajes de logro 
+# función 
+ajustar_logro_irt <- function(porcentaje,
+                              dificultad,
+                              dificultad_ref = 0,
+                              beta = 0.5) {
+  
+  # Casos extremos
+  ifelse(
+    porcentaje == 100,
+    100,
+    
+    ifelse(
+      porcentaje == 0,
+      0,
+      
+      {
+        # Convertir porcentaje a proporción
+        p <- porcentaje / 100
+        
+        # Pasar a escala logit
+        logit_p <- qlogis(p)
+        
+        # Ajustar por dificultad del ensayo
+        logit_ajustado <- logit_p +
+          beta * (dificultad - dificultad_ref)
+        
+        # Volver a porcentaje
+        plogis(logit_ajustado) * 100
+      }
+    )
+  )
+}
+
+ensayos_limpio <- ensayos_limpio %>%
+  mutate(
+    porcentaje_logro_ajustado_leng = ajustar_logro_irt(
+      porcentaje = porcentaje_logro,
+      dificultad = mean_dffclt_leng,
+      dificultad_ref = 0,
+      beta = 0.5
+    )
+  )
+
+ensayos_limpio <- ensayos_limpio %>%
+  mutate(
+    porcentaje_logro_ajustado_mate = ajustar_logro_irt(
+      porcentaje = porcentaje_logro,
+      dificultad = mean_dffclt_mate,
+      dificultad_ref = 0,
+      beta = 0.5
+    )
+  )
+
+# consolidar variable en porcentaje de logro 
+ensayos_limpio <- ensayos_limpio %>%
+  mutate(
+    porcentaje_logro_respaldo =porcentaje_logro
+    ,porcentaje_logro = case_when(
+      area == "matematica"~porcentaje_logro_ajustado_mate
+      ,area == "lenguaje"~porcentaje_logro_ajustado_leng
+    )
+  )
+# Revisar - no deben quedar valores NA - sobre 100 o bajo 0 en porcentaje de logro 
+stopifnot(
+  ensayos_limpio |> 
+    filter(is.na(porcentaje_logro)) |> 
+    nrow()==0
+)
+
+stopifnot(
+  ensayos_limpio |> 
+    filter(porcentaje_logro<0) |> 
+    nrow()==0
+)
+
+stopifnot(
+  ensayos_limpio |> 
+    filter(porcentaje_logro>100) |> 
+    nrow()==0
+)
 
 # Un mismo estudiante puede tener 2 registros para el mismo número de
 # ensayo (p.ej. versión "basal" y "extenso" del ensayo 1 en matemática
@@ -277,3 +400,4 @@ saveRDS(school_model_data, dir_salidas %>% file.path("school_model_data.rds"))
 saveRDS(efecto_historico,  dir_salidas %>% file.path("efecto_historico.rds"))
 
 cat("\nListo. Objetos guardados en output/*.rds\n")
+

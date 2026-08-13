@@ -221,7 +221,9 @@ write_csv(
     select(agno, grado, area, rbd_revisado, n_estudiantes,
            gse_etiqueta, depe2_etiqueta, rural_etiqueta, nom_com_rbd,
            agno_contexto, n_anios_nivel_hist,
-           mean_logro, mean_logro_enc, conf_mean_logro, pred_final_logro,
+           mean_logro, 
+           #mean_logro_enc, 
+           conf_mean_logro, pred_final_logro,
            contexto_nivel, desvio_nivel, nivel_hist_colegio,
            contexto_sd, sd_hist_colegio,
            pred_simce_colegio, sd_simce_pred, origen_sd, tercil),
@@ -407,3 +409,4 @@ cat("Listo. Archivos generados en output/modelo_lme/:\n",
     " - predicciones_individual.csv (versión A con rango, versión B, y legado v2)\n",
     " - chequeo_coherencia.csv\n",
     "\nSiguiente paso: 04_validacion_individual.R\n")
+

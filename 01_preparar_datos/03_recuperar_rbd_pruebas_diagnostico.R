@@ -386,6 +386,12 @@ cat("Sin resolver (requieren revisión manual):",
 
 write_xlsx(resultados_clasificados, archivo_salida)
 
+
+# Limpiar ambiente
+gc()
+rm(list=ls())
+
+
 # resultados_clasificados |>
 #   filter(is.na(rbd_santillana)) |>
 #   arrange(clasificacion) |>

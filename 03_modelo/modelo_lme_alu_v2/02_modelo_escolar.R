@@ -287,3 +287,5 @@ write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv")
 
 cat("\nListo. Modelos de NIVEL guardados en output/modelo_lme/modelos_escolares.rds\n")
 cat("Siguiente paso: 02b_modelo_dispersion.R (modelo del ANCHO de la distribución)\n")
+
+

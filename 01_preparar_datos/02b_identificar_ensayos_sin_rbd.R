@@ -56,8 +56,8 @@ dup_alumnos %>%
   writexl::write_xlsx(file.path(dir_salida, 'duplicado_alumnos_colegio_usuario_nombre_evaluacion.xlsx'))
 
 # liberar espacio y eliminar objetos
-# gc()
-# rm(list=ls())
+gc()
+rm(list=ls())
 
 
 
