@@ -218,7 +218,7 @@ tabla_conversion_modelo1 <- read_excel(file.path(ruta_data_in, "Escala Simce San
 
 datos_ensayo_santillana_consolidado_final <- datos_ensayo_santillana_consolidado_final0 |> 
   mutate(porcentaje_logro_sin_decimal = round(porcentaje_logro)) %>% 
-  left_join(tabla_conversion, by = c('porcentaje_logro_sin_decimal' = 'porc_lect4b', 'grado', 'area'))
+  left_join(tabla_conversion_modelo1, by = c('porcentaje_logro_sin_decimal' = 'porc_lect4b', 'grado', 'area'))
 
 # Guardar resultados
 datos_ensayo_santillana_consolidado_final |> 
