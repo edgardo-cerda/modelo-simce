@@ -1,13 +1,17 @@
 
 
 # Cargar funciones -----
+require(tidyverse)
+require(dplyr)
+require(arrow)
+require(readr)
 
-# data <-read_rds("../modelo-simce-datos/data_intermedia/datos_procesados_irt.rds")
-# 
-# source("funciones/funciones_proyecto_simce.R")
-# # generar rutas
-# rutas<-generar_ruta()
-# 
+data <-read_rds("../modelo-simce-datos/data_intermedia/datos_procesados_irt.rds")
+
+source("funciones/funciones_proyecto_simce.R")
+# generar rutas
+rutas<-generar_ruta()
+
 # generar_tabulado_agregado_irt(
 #   data = data_irt
 #   ,ruta_data_in = rutas$ruta_data_in
@@ -42,36 +46,89 @@ nivel <- c("4b","IIm")
 vector_ensayos <-1:6
 
 
-data_irt<-map2(asignatura,nivel
+data_irt_4b<-map(asignatura
         ,~generar_data_pre_irt(
            data = data
           ,n_ensayos = 1:6
           ,asignatura = .x
-          ,nivel = .y)
+          ,nivel = nivel[[1]])
         )
+
+
+data_irt_2m<-map(asignatura
+                 ,~generar_data_pre_irt(
+                   data = data
+                   ,n_ensayos = 1:6
+                   ,asignatura = .x
+                   ,nivel = nivel[[2]])
+)
+
+
+data_irt_mate <- list(
+  data_irt_4b[[1]]
+  ,data_irt_2m[[1]]
+)
+
+data_irt_leng <- list(
+  data_irt_4b[[2]]
+  ,data_irt_2m[[2]]
+)
+
+
+
 print(" se ejcutto generar_data_pre_irt")  
 
 # generar modelo y salida en en carpeta intermedia
 
 # Matemática
-tab_resumen_mate<-map_dfr(vector_ensayos
-                          ,~  generar_modelo_irt(data_input = data_irt
+tab_resumen_mate_4b<-map_dfr(vector_ensayos
+                          ,~  generar_modelo_irt(data_input = data_irt_mate
                                                  ,asignatura = 1
                                                  ,ensayos = .x )
                         )
 
+tab_resumen_mate_2m<-map_dfr(vector_ensayos
+                             ,~  generar_modelo_irt(data_input = data_irt_mate
+                                                    ,asignatura = 2
+                                                    ,ensayos = .x )
+)
 
 
 
 
 # Lenguaje
-tab_resumen_leng<-map_dfr(vector_ensayos
-                          ,~  generar_modelo_irt(data_input = data_irt
+tab_resumen_leng_4b<-map_dfr(vector_ensayos
+                          ,~  generar_modelo_irt(data_input = data_irt_leng
+                                                 ,asignatura = 1
+                                                 ,ensayos = .x )
+)
+
+tab_resumen_leng_2m<-map_dfr(vector_ensayos
+                          ,~  generar_modelo_irt(data_input = data_irt_leng
                                                  ,asignatura = 2
                                                  ,ensayos = .x )
 )
 
+# unificar dastos por asignatura 
+tab_resumen_leng <- bind_rows(
+  tab_resumen_leng_4b |> 
+    mutate(grado = "4b")
+ ,tab_resumen_leng_2m |> 
+    mutate(grado = "2m")
   
+)
+
+tab_resumen_mate <- bind_rows(
+  tab_resumen_mate_4b |> 
+    mutate(grado = "4b")
+  ,tab_resumen_mate_2m |> 
+    mutate(grado = "2m")
+  
+)
+
+
+
+
 # Exportar resultados 
 write_parquet(tab_resumen_leng
               ,paste0(
