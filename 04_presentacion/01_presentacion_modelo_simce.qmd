@@ -34,7 +34,7 @@ library(htmltools)
 ruta_figuras <- tryCatch({
   usuario <- Sys.info()[["user"]]
   rutas   <- config::get(config = usuario, file = "config.yml")
-  file.path(rutas$ruta_outputs, "modelo_lme_alu", "figuras_presentacion.rds")
+  file.path(rutas$ruta_outputs, "modelo_lme_alu_v2", "figuras_presentacion.rds")
 }, error = function(e) "figuras_presentacion.rds")
 
 figuras <- if (file.exists(ruta_figuras)) readRDS(ruta_figuras) else NULL
@@ -368,6 +368,39 @@ $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{co
 - **Validación out-of-time**, siempre contra baselines simples.
 :::
 
+## Calibración IRT de los ensayos
+
+[El insumo base, antes de entrar al modelo]{.eyebrow}
+
+::: incremental
+- Cada ensayo tiene su propia **forma** (batería de ítems), y las formas cambian de dificultad entre año y ronda. El **logro crudo** (% de respuestas correctas) de dos estudiantes que rindieron formas distintas no es directamente comparable.
+- Se ajusta un **modelo IRT concurrente**: todas las formas se calibran juntas, en una escala común de dificultad de ítems.
+- De ahí sale $\theta$ (habilidad estimada) y su error estándar para cada estudiante, controlando por qué ítems específicos rindió.
+- $\theta$ se traduce a un logro ajustado (`mean_logro_irt`) y se **encoge** con el logro crudo según la confiabilidad relativa de cada uno: donde el ajuste IRT es más confiable, pesa más.
+:::
+
+## Calibración IRT: ¿aporta?
+
+[Comparación con y sin el insumo IRT, mismo modelo]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_efecto_irt",
+  "MAE del modelo de nivel usando sólo logro crudo vs. usando el logro ajustado por IRT, mismo modelo y mismo año de prueba.",
+  "02_modelo_escolar.R -> metricas_validacion.csv")
+```
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_efecto_irt",
+  "Logro crudo vs. logro ajustado por IRT, por colegio: la distancia a la diagonal es lo que corrige la calibración: color según cuán distinta era la dificultad de la forma rendida.",
+  "01_preparar_insumos_modelo.R -> comparacion_irt.rds")
+```
+
+El IRT gana en 3 de las 4 combinaciones (0,2–0,3 puntos de MAE). En 2° medio lenguaje el logro crudo ya rendía bien y el ajuste no mejora el MAE en esta prueba puntual — por eso el insumo combinado se encoge según confiabilidad relativa, en vez de reemplazar directamente el logro crudo por el IRT.
+
 ## Modelo de nivel — la media del colegio
 
 [Pieza 1 de 3]{.eyebrow}
@@ -390,7 +423,7 @@ promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
 
 Por año × grado × área:
 
-- `mean_logro`: promedio de logro en los ensayos del año.
+- `mean_logro`: promedio de logro en los ensayos del año, **combinando logro crudo y logro ajustado por IRT** según su confiabilidad relativa (lámina anterior).
 - `pred_final_logro` y `slope_logro`: nivel proyectado y pendiente de mejora, de un **modelo mixto de crecimiento** que estabiliza a quienes rinden pocos ensayos. Se proyecta al 6to ensayo.
 - `n_evals`: cuántos ensayos rindió.
 
@@ -454,9 +487,44 @@ Supuesto explícito: el **ranking** de los ensayos dentro del colegio se parece 
 #| fig-align: center
 mostrar_tabla(
   "t_nivel",
-  "MAE del modelo vs. el baseline del promedio histórico, mejora, R² en el año de prueba, y el MAE separado para colegios con y sin historia previa.",
+  "MAE y R² del modelo final en el año de prueba, con el MAE de referencia de modelo anterior y modelo 1 sobre el mismo universo de colegios.",
   "02_modelo_escolar.R -> metricas_validacion.csv")
 ```
+
+## Comparación de escenarios
+
+[Tres formas de estimar el mismo puntaje]{.eyebrow}
+
+::: incremental
+- **Modelo 1**: la regla de conversión fija de Santillana (logro del ensayo → puntaje SIMCE), la alternativa simple que se descartó al inicio.
+- **Modelo anterior**: el modelo por capas (media + ancho + posición) sin calibración IRT.
+- **Modelo final**: el mismo modelo por capas, con el logro ajustado por IRT como insumo de nivel.
+:::
+
+Los tres se evalúan sobre el **mismo conjunto de colegios** del año de prueba, para que la comparación sea directa.
+
+## Comparación de escenarios (cont.)
+
+[MAE de nivel-colegio, por escenario]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_grafico(
+  "g_comparacion_escenarios",
+  "MAE de nivel-colegio de los 3 escenarios, por grado y área, sobre el mismo conjunto de colegios.",
+  "01_figuras_presentacion.R -> comparacion_escenarios")
+```
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_comparacion_escenarios",
+  "MAE, R² y mejora porcentual del modelo final frente a modelo 1 y modelo anterior, por grado y área.",
+  "01_figuras_presentacion.R -> comparacion_escenarios")
+```
+
+- La regla de conversión fija (**modelo 1**) funciona razonablemente en 4° básico, pero se degrada fuerte en 2° medio (donde el R² incluso se vuelve negativo): confirma el punto de la sección de introducción — una conversión sin modelar el colegio no aguanta el cambio de contexto.
+- El **modelo final** mejora sobre el **modelo anterior** en la mayoría de grado × área; en 2° medio lenguaje queda levemente peor, consistente con lo visto en la lámina de calibración IRT.
 
 ## Nivel: observado vs. predicho
 
@@ -569,9 +637,9 @@ Los cortes son los oficiales de los **Estándares de Aprendizaje**, no salen de 
 ::: incremental
 - Completar la recuperación de RBD para los colegios pendientes de revisión manual
 - Ajustar/probar nuevas especificaciones o variables predictoras
-- Incorporar ajuste psicométrico a puntajes de logros
+- Extender la calibración IRT a nuevas formas a medida que se agregan ensayos
 - Validar el modelo con un nuevo lote de ensayos
-- Generar código final para predicciones 2026 
+- Generar código final para predicciones 2026
 :::
 
 

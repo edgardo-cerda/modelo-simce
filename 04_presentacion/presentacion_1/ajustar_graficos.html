@@ -1,0 +1,61 @@
+<!--
+  ajustar_graficos.html
+  ---------------------------------------------------------------
+  Se incluye al final del <body> de la presentación (ver la clave
+  `include-after-body` en el YAML del .qmd).
+
+  ¿Qué problema resuelve? Los gráficos de plotly deciden su ancho
+  midiendo el contenedor en el momento en que se dibujan. En reveal.js
+  eso pasa cuando casi todas las láminas todavía están ocultas y la
+  presentación aún no aplicó su escala, así que el gráfico se queda con
+  un ancho que no corresponde: a veces más angosto de lo que da la
+  lámina, y a veces más ancho, en cuyo caso se sale de la diapositiva y
+  hay que desplazarse para verlo completo.
+
+  La solución es volver a medirlo cuando la lámina efectivamente se
+  muestra: se le quita el ancho fijo que traía y se le pide a plotly que
+  se reajuste a su contenedor. Como reveal trabaja en coordenadas
+  lógicas (1050 x 700) y escala todo el conjunto, con esto el gráfico
+  calza en cualquier pantalla o proyector.
+-->
+<script>
+(function () {
+
+  function ajustarLamina(lamina) {
+    if (!lamina || typeof Plotly === "undefined") return;
+    lamina.querySelectorAll(".plotly").forEach(function (g) {
+      if (!g._fullLayout) return;              // todavía no se dibujó
+      if (g.layout) {
+        delete g.layout.width;                 // suelta el ancho fijo
+        g.layout.autosize = true;
+      }
+      try { Plotly.Plots.resize(g); } catch (e) { /* nada que hacer */ }
+    });
+  }
+
+  function ajustarActual() {
+    if (window.Reveal && Reveal.getCurrentSlide) {
+      ajustarLamina(Reveal.getCurrentSlide());
+    }
+  }
+
+  window.addEventListener("load", function () {
+    if (!window.Reveal) return;
+
+    // La lámina inicial: se le da un momento a htmlwidgets para dibujar.
+    setTimeout(ajustarActual, 300);
+
+    Reveal.on("slidechanged", ajustarActual);
+    Reveal.on("resize", ajustarActual);
+    Reveal.on("overviewhidden", ajustarActual);
+
+    // Cambios de tamaño de la ventana o del proyector.
+    var t = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(t);
+      t = setTimeout(ajustarActual, 150);
+    });
+  });
+
+})();
+</script>

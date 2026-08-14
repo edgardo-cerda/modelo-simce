@@ -43,7 +43,14 @@ library(plotly)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu')
+dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+
+# Modelo anterior (sin IRT) y regla de conversión externa ("modelo 1"):
+# insumos del escenario 2 y 3 en las comparaciones de resultados. El
+# escenario 1 (este script) siempre es "modelo final" = modelo_lme_alu_v2.
+dir_salidas_anterior <- ruta_outputs %>% file.path('modelo_lme_alu')
+ruta_consolidado_ensayos <- rutas$ruta_data_intermedia %>%
+  file.path('ensayo_santillana', 'consolidado_ensayo_santillana.parquet')
 
 # Paleta: la misma del tema de la presentación (tema_simce.scss).
 COL <- c(tinta    = "#10303B",
@@ -77,6 +84,16 @@ leer_csv <- function(nombre) {
     return(NULL)
   }
   suppressMessages(read_csv(ruta, show_col_types = FALSE))
+}
+# Igual que leer_rds(), pero desde un directorio arbitrario: se usa para leer
+# los insumos del modelo anterior (modelo_lme_alu) sin cambiar dir_salidas.
+leer_rds_de <- function(dir, nombre) {
+  ruta <- dir %>% file.path(nombre)
+  if (!file.exists(ruta)) {
+    cat("  [falta]", nombre, "en", dir, "-> las figuras que dependen de él quedarán vacías\n")
+    return(NULL)
+  }
+  readRDS(ruta)
 }
 
 # Construye una figura sin arriesgar el script completo: si los datos
@@ -155,13 +172,70 @@ val_estrato      <- leer_csv("validacion_por_estrato.csv")     # 04
 val_colegio      <- leer_rds("validacion_por_colegio.rds")     # 04
 dens_validacion  <- leer_rds("dens_validacion.rds")            # 04
 anio_test        <- leer_rds("anio_test.rds")                  # 02
+niveles_logro    <- leer_rds("niveles_logro.rds")              # 04
+comparacion_irt  <- leer_rds("comparacion_irt.rds")            # 01 (calibración IRT)
 
 anio_test <- if (is.null(anio_test)) NA else anio_test
+
+# --- Insumos del escenario "modelo anterior" (sin IRT) ---
+diag_nivel_anterior <- leer_rds_de(dir_salidas_anterior, "diag_nivel.rds")
+
+# --- Insumo del escenario "modelo 1" (regla de conversión Santillana) ---
+# Predicción pegada por evaluación en el consolidado de ensayos; se agrega
+# primero por estudiante y luego por colegio (así un estudiante con más
+# ensayos rendidos no pesa más que uno con uno solo).
+modelo1_colegio <- construir("modelo1_colegio",
+  list(if (file.exists(ruta_consolidado_ensayos)) TRUE else NULL, anio_test), {
+  arrow::read_parquet(ruta_consolidado_ensayos) %>%
+    filter(agno == anio_test, !is.na(simce_estimado_modelo1)) %>%
+    mutate(rbd_revisado = as.numeric(rbd)) %>%
+    group_by(rbd_revisado, grado, area, id_usuario_curso) %>%
+    summarise(pred_alu = mean(simce_estimado_modelo1, na.rm = TRUE), .groups = "drop") %>%
+    group_by(rbd_revisado, grado, area) %>%
+    summarise(pred_modelo1 = mean(pred_alu, na.rm = TRUE), .groups = "drop")
+})
+
+# --- Comparación de escenarios a nivel colegio: modelo 1 / anterior / final ---
+# Universo: colegios del set de prueba del modelo final (diag_nivel) que
+# además tienen predicción del modelo anterior y del modelo 1. Es la misma
+# base para la tabla ampliada de validación de nivel y para la lámina
+# dedicada de comparación de escenarios.
+comparacion_escenarios <- construir("comparacion_escenarios",
+  list(diag_nivel, diag_nivel_anterior, modelo1_colegio), {
+  diag_nivel %>%
+    transmute(rbd_revisado, grado, area, observado, pred_final = predicho) %>%
+    inner_join(
+      diag_nivel_anterior %>% transmute(rbd_revisado, grado, area, pred_anterior = predicho),
+      by = c("rbd_revisado", "grado", "area")
+    ) %>%
+    inner_join(modelo1_colegio, by = c("rbd_revisado", "grado", "area"))
+})
 
 # 2. TABLAS ----
 
 cat("\nTablas:\n")
 tablas <- list()
+
+# MAE/R² por escenario (modelo 1 / anterior / final), sobre el universo
+# comparable de comparacion_escenarios. Formato largo -> se usa tanto para
+# ampliar t_nivel como para la tabla dedicada t_comparacion_escenarios.
+mae_escenarios <- construir("mae_escenarios", list(comparacion_escenarios), {
+  comparacion_escenarios %>%
+    pivot_longer(c(pred_modelo1, pred_anterior, pred_final),
+                 names_to = "escenario", values_to = "pred") %>%
+    mutate(escenario = recode(escenario,
+                              pred_modelo1  = "Modelo 1",
+                              pred_anterior = "Modelo anterior",
+                              pred_final    = "Modelo final")) %>%
+    group_by(grado, area, escenario) %>%
+    summarise(
+      n_colegios = n(),
+      mae = mean(abs(pred - observado), na.rm = TRUE),
+      r2  = 1 - sum((observado - pred)^2, na.rm = TRUE) /
+                sum((observado - mean(observado, na.rm = TRUE))^2, na.rm = TRUE),
+      .groups = "drop"
+    )
+})
 
 ## --- 2.1 Descriptivos generales de los datos (lámina "Los datos en cifras") ----
 tablas$t_datos <- construir("t_datos", list(descriptivos), {
@@ -247,7 +321,7 @@ tablas$t_nivel <- construir("t_nivel", list(met_nivel), {
     base$media_obs_test  <- NA_real_
   }
 
-  base %>%
+  out <- base %>%
     etiquetar() %>%
     arrange(grado, area) %>%
     transmute(
@@ -255,9 +329,23 @@ tablas$t_nivel <- construir("t_nivel", list(met_nivel), {
       `Colegios (prueba)` = n_test,
       `SIMCE predicho (promedio)` = round(media_pred_test, 1),
       `SIMCE real (promedio)` = round(media_obs_test, 1),
-      `MAE modelo` = round(mae, 1),
+      `MAE modelo final` = round(mae, 1),
       `R² (prueba)` = round(r2_test, 2)
     )
+
+  # Referencia de los otros 2 escenarios, sobre el universo comparable
+  # (colegios de prueba con predicción de modelo anterior y modelo 1).
+  if (!is.null(mae_escenarios)) {
+    ref <- mae_escenarios %>%
+      filter(escenario %in% c("Modelo anterior", "Modelo 1")) %>%
+      etiquetar() %>%
+      select(grado, area, escenario, mae) %>%
+      pivot_wider(names_from = escenario, values_from = mae,
+                  names_prefix = "MAE ") %>%
+      rename(Grado = grado, Área = area)
+    out <- out %>% left_join(ref, by = c("Grado", "Área"))
+  }
+  out
 })
 
 # --- 2.6 Validación del modelo de dispersión
@@ -373,6 +461,54 @@ tablas$t_coherencia <- construir("t_coherencia", list(coherencia), {
       `Colegios` = colegios,
       `|media predicha − predicción del colegio|` = round(dif_media, 2),
       `sd de las predicciones / ancho predicho` = round(razon_sd, 3)
+    )
+})
+
+# --- 2.10 Comparación de los 3 escenarios de predicción (nivel colegio)
+# Modelo 1 (regla de conversión Santillana) vs. modelo anterior (sin IRT)
+# vs. modelo final (con IRT), sobre el mismo universo comparable de colegios.
+tablas$t_comparacion_escenarios <- construir("t_comparacion_escenarios",
+  list(mae_escenarios), {
+  ORDEN_ESC <- c("Modelo 1", "Modelo anterior", "Modelo final")
+  base <- mae_escenarios %>%
+    etiquetar() %>%
+    mutate(escenario = factor(escenario, levels = ORDEN_ESC)) %>%
+    arrange(grado, area, escenario)
+
+  mejora <- base %>%
+    select(grado, area, escenario, mae) %>%
+    pivot_wider(names_from = escenario, values_from = mae) %>%
+    transmute(
+      grado, area,
+      `mejora_vs_modelo1`    = round(100 * (`Modelo 1` - `Modelo final`) / `Modelo 1`, 1),
+      `mejora_vs_anterior`   = round(100 * (`Modelo anterior` - `Modelo final`) / `Modelo anterior`, 1)
+    )
+
+  base %>%
+    transmute(grado, area, escenario,
+              `Colegios` = n_colegios,
+              `MAE` = round(mae, 1),
+              `R²` = round(r2, 2)) %>%
+    left_join(mejora, by = c("grado", "area")) %>%
+    rename(Grado = grado, Área = area, Escenario = escenario,
+           `Mejora modelo final vs. modelo 1 (%)` = mejora_vs_modelo1,
+           `Mejora modelo final vs. modelo anterior (%)` = mejora_vs_anterior)
+})
+
+# --- 2.11 Efecto de la calibración IRT dentro del modelo final
+# Ablación interna de modelo_lme_alu_v2: mismo modelo, con y sin el insumo
+# IRT (mae_sin_irt / mae_con_irt ya vienen calculados en 02).
+tablas$t_efecto_irt <- construir("t_efecto_irt", list(met_nivel), {
+  faltan <- !all(c("mae_sin_irt", "mae_con_irt") %in% names(met_nivel))
+  if (faltan) return(NULL)
+  met_nivel %>%
+    etiquetar() %>%
+    arrange(grado, area) %>%
+    transmute(
+      Grado = grado, Área = area,
+      `MAE sin IRT` = round(mae_sin_irt, 1),
+      `MAE con IRT` = round(mae_con_irt, 1),
+      `Ganancia (puntos)` = round(mae_sin_irt - mae_con_irt, 2)
     )
 })
 
@@ -624,6 +760,10 @@ gg$g_obs_pred_nivel <- construir("g_obs_pred_nivel", list(diag_nivel), {
   d <- diag_nivel %>% etiquetar()
   # Compatibilidad con salidas de 02 anteriores, que no traían mean_logro.
   if (!"mean_logro" %in% names(d)) d$mean_logro <- NA_real_
+  # v2 renombró n_anios_hist -> n_anios_nivel_hist.
+  if (!"n_anios_hist" %in% names(d) && "n_anios_nivel_hist" %in% names(d)) {
+    d$n_anios_hist <- d$n_anios_nivel_hist
+  }
 
   d %>%
     mutate(text = paste0("RBD ", rbd_revisado,
@@ -708,6 +848,48 @@ gg$g_qmae_estrato <- construir("g_qmae_estrato", list(val_estrato), {
     tema_pres
 })
 
+# --- 3.15 Comparación de escenarios: MAE de nivel-colegio por escenario
+gg$g_comparacion_escenarios <- construir("g_comparacion_escenarios",
+  list(mae_escenarios), {
+  ORDEN_ESC <- c("Modelo 1", "Modelo anterior", "Modelo final")
+  mae_escenarios %>%
+    etiquetar() %>%
+    mutate(escenario = factor(escenario, levels = ORDEN_ESC),
+           text = paste0(escenario, " · ", grado, " · ", area,
+                        "<br>MAE: ", round(mae, 1),
+                        "<br>Colegios: ", n_colegios)) %>%
+    ggplot(aes(escenario, mae, fill = escenario, text = text)) +
+    geom_col(width = 0.7) +
+    facet_grid(area ~ grado) +
+    scale_fill_manual(values = c("Modelo 1" = COL[["bruma"]],
+                                 "Modelo anterior" = COL[["marigold"]],
+                                 "Modelo final" = COL[["lago"]])) +
+    labs(x = NULL, y = "MAE de nivel-colegio (puntos SIMCE)") +
+    theme(axis.text.x = element_blank()) +
+    tema_pres
+})
+
+# --- 3.16 Efecto de la calibración IRT: logro crudo vs. logro IRT
+gg$g_efecto_irt <- construir("g_efecto_irt", list(comparacion_irt), {
+  comparacion_irt %>%
+    filter(agno == max(agno)) %>%
+    etiquetar() %>%
+    mutate(text = paste0("RBD ", rbd_revisado, " · ", grado, " · ", area,
+                         "<br>Logro crudo: ", round(pct_crudo, 1), "%",
+                         "<br>Logro IRT: ", round(pct_irt, 1), "%",
+                         "<br>Dificultad relativa de la forma: ",
+                         round(dif_puntos, 1))) %>%
+    ggplot(aes(pct_crudo, pct_irt, colour = dif_puntos, text = text)) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed",
+                colour = COL[["coral"]]) +
+    geom_point(alpha = 0.6, size = 1.3) +
+    scale_colour_gradient2(low = COL[["lago"]], mid = COL[["bruma"]],
+                           high = COL[["coral"]], midpoint = 0) +
+    facet_grid(area ~ grado) +
+    labs(x = "Logro crudo del colegio (%)", y = "Logro IRT del colegio (%)") +
+    tema_pres
+})
+
 # 4. Versión interactiva de cada gráfico -------------------------
 graficos <- imap(compact(gg), function(p, nombre) {
   tryCatch(
@@ -716,7 +898,8 @@ graficos <- imap(compact(gg), function(p, nombre) {
                                            "g_qmae_estrato", "g_densidad_logro",
                                            "g_logro_por_evaluacion",
                                            "g_evolucion_estandarizada",
-                                           "g_simce_por_gse", "g_simce_por_anio"),
+                                           "g_simce_por_gse", "g_simce_por_anio",
+                                           "g_comparacion_escenarios"),
                 # el colegio de ejemplo va junto a una tabla: más bajo
                 # los que comparten lámina con una tabla van más bajos
                 alto = if (nombre %in% c("g_colegio_ejemplo", "g_simce_por_anio")) {
