@@ -134,34 +134,6 @@ codigos_plenos_rbd_3 <- file.path(ruta_data_in, 'ensayos_santillana',
   dplyr::select(rbd, id_pleno = id_colegio) |> 
   mutate(version_id_pleno = "colegios_sin_rbd_ agregados v1")
 
-<<<<<<< HEAD
-codigos_plenos_rbd_4 <- file.path(ruta_data_in, 'Datos Medición Nacional_RBD',
-                                  'Colegios_rbd_pendientes_de_revision PP_M.xlsx') %>% 
-  read_excel() |>
-  janitor::clean_names()
-
-codigos_plenos_rbd_4<-codigos_plenos_rbd_4 |>
-  mutate(version_id_pleno = "agregado_v4"
-         ,rbd_identificado= as.numeric(rbd_identificado)) |> 
-  select(
-    "rbd"=rbd_identificado
-    ,id_pleno
-    ,version_id_pleno
-  ) |> 
-  filter(
-    !is.na(rbd)
-  )
-
-
-
-
-## Evaluar si RBD son consistentes y están completas: ----
-conversion_id_colegio_rbd <- bind_rows(codigos_plenos_rbd_1,
-                                codigos_plenos_rbd_2,
-                                codigos_plenos_rbd_3,
-                                codigos_plenos_rbd_4) |> 
-  distinct(id_pleno, rbd, .keep_all = TRUE) |> 
-=======
 codigos_plenos_rbd_4 <- file.path(ruta_data_in, 'ensayos_santillana',
                                   'Colegios_rbd_pendientes_de_revision_PP_M_05082026.xlsx') %>% 
   read_excel() |> 
@@ -211,20 +183,16 @@ tabla_conversion_modelo1 <- read_excel(file.path(ruta_data_in, "Escala Simce San
                                sheet = "tabla_conversion") %>% 
   rename(lenguaje = puntaje_lect4b,
          matematica = puntaje_mate4b) %>%  
-  mutate(grado = '4b') %>%  # Modelo 1 solo cubre los puntajes de 4b, no 2m
+  # mutate(grado = '4b') %>%  # Modelo 1 solo cubre los puntajes de 4b, no 2m
   pivot_longer(cols = c(lenguaje, matematica),
                names_to = 'area',
                values_to = 'simce_estimado_modelo1')
 
 datos_ensayo_santillana_consolidado_final <- datos_ensayo_santillana_consolidado_final0 |> 
   mutate(porcentaje_logro_sin_decimal = round(porcentaje_logro)) %>% 
-  left_join(tabla_conversion_modelo1, by = c('porcentaje_logro_sin_decimal' = 'porc_lect4b', 'grado', 'area'))
+  left_join(tabla_conversion_modelo1, by = c('porcentaje_logro_sin_decimal' = 'porc_lect4b', 'area'))
 
 # Guardar resultados
 datos_ensayo_santillana_consolidado_final |> 
   write_parquet(file.path(dir_salida, 'consolidado_ensayo_santillana.parquet'))
-
-# Limpiar ambiente
-gc()
-rm(list=ls())
 
