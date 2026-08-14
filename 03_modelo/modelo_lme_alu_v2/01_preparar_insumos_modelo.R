@@ -366,6 +366,39 @@ cat("IRT cargado:", nrow(irt_theta), "estudiantes con theta |",
     n_distinct(paste(irt_theta$agno, irt_theta$grado, irt_theta$area)),
     "grupos calibrados\n")
 
+# --- Habilidad por ENSAYO, en la misma escala de logro (v7) -------------
+# `irt_theta_forma.rds` trae una fila por estudiante x forma rendida, con
+# los parámetros de ítem fijos de la calibración concurrente. Se traduce
+# cada theta al mismo porcentaje sobre el banco completo que `logro_irt`,
+# con lo cual las mediciones de un mismo estudiante en ensayos distintos
+# quedan comparables entre sí: es lo que permite estimar crecimiento sin
+# confundirlo con la dificultad de la forma que le tocó.
+ruta_irt_theta_forma <- dir_salidas %>% file.path("irt_theta_forma.rds")
+
+if (!file.exists(ruta_irt_theta_forma)) {
+  stop("Falta ", ruta_irt_theta_forma, ". Es una salida nueva de ",
+       "00_irt_calibracion.R (bloque 4d-bis): hay que volver a correrlo.")
+}
+
+irt_theta_forma <- readRDS(ruta_irt_theta_forma) %>%
+  group_by(agno, grado, area) %>%
+  group_modify(function(.x, .y) {
+    it <- irt_items %>%
+      filter(agno == .y$agno, grado == .y$grado, area == .y$area,
+             is.finite(a), is.finite(b))
+    .x$logro_irt_eval <- if (nrow(it) == 0) NA_real_ else
+      curva_verdadera(.x$theta_forma, it$a, it$b)
+    .x
+  }) %>%
+  ungroup()
+
+cat("IRT por ensayo:", nrow(irt_theta_forma), "mediciones |",
+    n_distinct(irt_theta_forma$id_usuario_curso), "estudiantes |",
+    "mediana de ensayos por estudiante: ",
+    median(table(paste(irt_theta_forma$agno, irt_theta_forma$grado,
+                       irt_theta_forma$area, irt_theta_forma$id_usuario_curso))),
+    "\n")
+
 stopifnot(
   "irt_theta trae theta o se_theta no finitos" =
     all(is.finite(irt_theta$theta) & is.finite(irt_theta$se_theta)),
@@ -641,33 +674,94 @@ cat("\nEstudiantes sin theta que conservan su logro crudo:",
     sum(is.na(resumen_simple$theta)), "de", nrow(resumen_simple), "\n")
 
 # ---- 4. Modelo de crecimiento por estudiante (lme4) -------------------
-# Interceptos aleatorios por COLEGIO y por ESTUDIANTE. Ya NO hay pendiente:
-# ni individual (~27% de los estudiantes rinde un solo ensayo, así que no es
-# identificable) ni por colegio (los ensayos no forman una progresión — ver el
-# punto (1) del encabezado). Por lo tanto este script tampoco produce
-# `slope_logro`, y 02 no la puede usar.
+# CAMBIO v7: vuelve la PENDIENTE, y el modelo corre sobre el logro
+# ajustado por IRT en vez del logro crudo.
 #
-# Se devuelve `pred_final_logro` (el intercepto total, acotado a [0,100]) y
-# `nivel_est` (el intercepto aleatorio del estudiante, ya encogido por lme4).
-# El acotado a [0,100] genera EMPATES en los extremos, así que para ordenar
-# estudiantes dentro del colegio NO se usa: eso lo hace `indice_ensayo` de la
-# sección 4b. `pred_final_logro` queda como predictor del modelo de colegio
-# (02) y como base de las columnas de auditoría `*_v4`.
+# Por qué ahora sí. La pendiente se había sacado porque los ensayos no
+# eran comparables entre sí: cada forma tiene su propia dificultad, así
+# que una "mejora" entre el ensayo 1 y el 4 podía ser sólo una forma más
+# fácil. Con `logro_irt_eval` esa objeción desaparece — cada medición se
+# expresa como porcentaje sobre el MISMO banco completo, sin importar qué
+# forma se rindió — y estimar crecimiento vuelve a ser defendible.
+#
+#   logro_irt_eval ~ n_evaluacion_c + (1 | id_usuario_curso)
+#                                   + (1 + n_evaluacion_c | rbd_revisado)
+#
+# Tres detalles de diseño:
+#
+#   - `n_evaluacion_c = n_evaluacion - 6`. Centrar en el 6º ensayo hace
+#     que el intercepto SEA la predicción al 6º ensayo, sin extrapolar a
+#     mano: `pred_final_logro` sale directo del intercepto total.
+#   - Ponderación por `1/se_theta_forma^2`. Cada medición trae su propio
+#     error estándar del IRT; una hecha con pocos ítems pesa menos que
+#     una precisa. Los pesos se normalizan a media 1 dentro del grupo
+#     para no cambiar la escala de la varianza residual.
+#   - La pendiente es POR COLEGIO, no por estudiante. Se probó primero
+#     con pendiente individual y no es identificable: los estudiantes
+#     rinden 2,7 ensayos en promedio y en 2023 menos de 2, así que lme4
+#     rechaza el modelo (más efectos aleatorios que observaciones) en los
+#     cuatro grupos de 2023 y devuelve un ajuste singular en otro. El
+#     problema de fondo no es que falle: es que fallaba SÓLO en algunos
+#     años, y entonces `pred_final_logro` significaba una cosa en 2023
+#     (intercepto + pendiente común) y otra en 2024-25 (con pendiente
+#     individual). Para un modelo que se entrena en un año y predice otro
+#     esa inconsistencia del predictor es peor que la pérdida de detalle.
+#     El colegio tiene cientos de mediciones, así que su pendiente sí es
+#     identificable en los 12 grupos y la definición queda uniforme.
+#     Tampoco se pierde el ordenamiento individual: dentro del colegio
+#     eso lo gobierna `indice_ensayo` (secc. 4b), no esta variable.
+#
+# Si ni siquiera la pendiente por colegio converge, se cae a pendiente
+# sólo fija y queda registrado en el log.
+#
+# Se devuelven `pred_final_logro` (predicción al 6º ensayo, acotada a
+# [0,100]), `slope_logro` (pendiente del estudiante, ya encogida) y
+# `nivel_est`. El acotado genera EMPATES en los extremos, así que para
+# ordenar estudiantes dentro del colegio NO se usa: eso lo sigue haciendo
+# `indice_ensayo` de la sección 4b.
+ENSAYO_OBJETIVO <- 6   # a qué ensayo se proyecta
+
 ajustar_crecimiento_grupo <- function(datos_grupo) {
-  
-  modelo <- lmer(
-    porcentaje_logro ~ (1 | rbd_revisado) + (1 | id_usuario_curso),
-    data = datos_grupo,
-    control = lmerControl(optimizer = "bobyqa")
+
+  datos_grupo <- datos_grupo %>%
+    mutate(n_evaluacion_c = n_evaluacion - ENSAYO_OBJETIVO,
+           w = 1 / se_theta_forma^2,
+           w = w / mean(w, na.rm = TRUE))
+
+  f_completa <- logro_irt_eval ~ n_evaluacion_c +
+    (1 | id_usuario_curso) + (1 + n_evaluacion_c | rbd_revisado)
+  f_simple   <- logro_irt_eval ~ n_evaluacion_c +
+    (1 | id_usuario_curso) + (1 | rbd_revisado)
+
+  ctrl <- lmerControl(optimizer = "bobyqa",
+                      optCtrl = list(maxfun = 2e5))
+
+  modelo <- tryCatch(
+    lmer(f_completa, data = datos_grupo, weights = w, control = ctrl),
+    error = function(e) {
+      cat("    [pendiente por colegio falló:", conditionMessage(e),
+          "-> se usa pendiente sólo fija]\n")
+      NULL
+    }
   )
+
+  if (is.null(modelo)) {
+    modelo <- lmer(f_simple, data = datos_grupo, weights = w, control = ctrl)
+  }
 
   fe <- fixef(modelo)
 
-  efecto_colegio <- ranef(modelo)$rbd_revisado %>%
-    rownames_to_column("rbd_revisado") %>%
+  re_col <- ranef(modelo)$rbd_revisado %>%
+    rownames_to_column("rbd_revisado")
+  # Con pendiente sólo fija la columna no existe: todos los colegios
+  # comparten la del efecto fijo.
+  if (!"n_evaluacion_c" %in% names(re_col)) re_col$n_evaluacion_c <- 0
+
+  efecto_colegio <- re_col %>%
     transmute(
-      rbd_revisado        = as.numeric(rbd_revisado),
-      colegio_intercepto  = `(Intercept)`
+      rbd_revisado       = as.numeric(rbd_revisado),
+      colegio_intercepto = `(Intercept)`,
+      colegio_pendiente  = n_evaluacion_c
     )
 
   ranef(modelo)$id_usuario_curso %>%
@@ -676,17 +770,50 @@ ajustar_crecimiento_grupo <- function(datos_grupo) {
       id_usuario_curso      = as.integer(id_usuario_curso),
       estudiante_intercepto = `(Intercept)`
     ) %>%
-    left_join(distinct(datos_grupo, id_usuario_curso, rbd_revisado), by = "id_usuario_curso") %>%
+    left_join(distinct(datos_grupo, id_usuario_curso, rbd_revisado),
+              by = "id_usuario_curso") %>%
     left_join(efecto_colegio, by = "rbd_revisado") %>%
     mutate(
-      intercepto_hat       = fe[["(Intercept)"]] + colegio_intercepto + estudiante_intercepto,
-      pred_final_logro     = pmin(pmax(intercepto_hat, 0), 100),
-      nivel_est            = estudiante_intercepto
+      # El intercepto ya está centrado en ENSAYO_OBJETIVO, así que ES la
+      # predicción a ese ensayo.
+      intercepto_hat   = fe[["(Intercept)"]] + coalesce(colegio_intercepto, 0) +
+                         estudiante_intercepto,
+      pred_final_logro = pmin(pmax(intercepto_hat, 0), 100),
+      slope_logro      = fe[["n_evaluacion_c"]] + coalesce(colegio_pendiente, 0),
+      nivel_est        = estudiante_intercepto
     ) %>%
-    select(id_usuario_curso, pred_final_logro, nivel_est)
+    select(id_usuario_curso, pred_final_logro, slope_logro, nivel_est)
 }
 
 grupos_crecimiento <- ensayos_dedup %>% distinct(agno, grado, area)
+
+# El modelo necesita la medición IRT de CADA ensayo, no el promedio del
+# estudiante. Se pega por (estudiante, ensayo); los ensayos sin theta
+# —grupo no calibrado— quedan fuera del ajuste.
+# Un mismo número de ensayo puede corresponder a DOS formas: en 2023
+# matemática conviven la "BAS" y la "EXT" (E1BAS / E1EXT), y hay
+# estudiantes que rindieron ambas. Sin colapsar, el join duplicaría esas
+# filas y el estudiante entraría dos veces al mismo punto de la
+# trayectoria. Se combinan las mediciones de un mismo ensayo por varianza
+# inversa —que es la forma correcta de promediar dos estimaciones de la
+# misma cantidad con precisiones distintas— y el error estándar resultante
+# es el de la combinación, menor que el de cada una por separado.
+irt_eval_unico <- irt_theta_forma %>%
+  filter(is.finite(logro_irt_eval), is.finite(se_theta_forma), se_theta_forma > 0) %>%
+  group_by(agno, grado, area, id_usuario_curso, n_evaluacion) %>%
+  summarise(
+    logro_irt_eval = weighted.mean(logro_irt_eval, 1 / se_theta_forma^2),
+    se_theta_forma = sqrt(1 / sum(1 / se_theta_forma^2)),
+    .groups = "drop"
+  )
+
+ensayos_crecimiento <- ensayos_dedup %>%
+  inner_join(irt_eval_unico,
+             by = c("agno", "grado", "area", "id_usuario_curso", "n_evaluacion"))
+
+cat("\nEnsayos con medición IRT para el modelo de crecimiento:",
+    nrow(ensayos_crecimiento), "de", nrow(ensayos_dedup),
+    sprintf("(%.1f%%)\n", 100 * nrow(ensayos_crecimiento) / nrow(ensayos_dedup)))
 
 crecimiento_individual <- map_dfr(seq_len(nrow(grupos_crecimiento)), function(i) {
   a  <- grupos_crecimiento$agno[i]
@@ -694,16 +821,61 @@ crecimiento_individual <- map_dfr(seq_len(nrow(grupos_crecimiento)), function(i)
   ar <- grupos_crecimiento$area[i]
   cat("Ajustando modelo de crecimiento:", a, g, ar, "...\n")
 
-  datos_grupo <- ensayos_dedup %>% filter(agno == a, grado == g, area == ar)
+  datos_grupo <- ensayos_crecimiento %>% filter(agno == a, grado == g, area == ar)
+  if (nrow(datos_grupo) == 0) {
+    cat("    [sin mediciones IRT: se omite el grupo]\n")
+    return(NULL)
+  }
   ajustar_crecimiento_grupo(datos_grupo) %>%
     mutate(agno = a, grado = g, area = ar)
-}) %>% 
-  left_join(ensayos_dedup %>% 
-              group_by(id_usuario_curso, agno, grado, area) %>% 
+})
+
+# Respaldo para quienes no tienen medición IRT en ningún ensayo (grupo sin
+# calibrar, o ítems descartados). El modelo no los pudo ajustar, pero
+# borrarlos acá los sacaría de `ind_features` —el join de la sección 5 es
+# inner— y con ellos se iría el colegio entero en los casos sin calibrar.
+# Se les asigna su propio logro crudo como proyección y la pendiente
+# mediana de su grupo: peor medida que la del modelo, pero los mantiene en
+# la base con una estimación honesta en vez de un NA.
+n_antes <- nrow(crecimiento_individual)
+
+crecimiento_individual <- resumen_simple %>%
+  select(agno, grado, area, id_usuario_curso, mean_logro_crudo) %>%
+  left_join(crecimiento_individual,
+            by = c("agno", "grado", "area", "id_usuario_curso")) %>%
+  group_by(agno, grado, area) %>%
+  mutate(
+    sin_irt          = is.na(pred_final_logro),
+    slope_logro      = coalesce(slope_logro, median(slope_logro, na.rm = TRUE), 0),
+    pred_final_logro = coalesce(pred_final_logro, mean_logro_crudo),
+    nivel_est        = coalesce(nivel_est, 0)
+  ) %>%
+  ungroup() %>%
+  select(-mean_logro_crudo) %>%
+  left_join(ensayos_dedup %>%
+              group_by(id_usuario_curso, agno, grado, area) %>%
               summarise(porcentaje_logro = mean(porcentaje_logro, na.rm = TRUE),
                         n_ensayos = n(),
-                        .groups = 'drop'), 
+                        .groups = 'drop'),
             by = c('id_usuario_curso', 'agno', 'grado', 'area'))
+
+cat("\nEstudiantes con crecimiento ajustado por IRT:", n_antes, "de",
+    nrow(crecimiento_individual),
+    sprintf("(%.1f%%). El resto usa su logro crudo como proyección.\n",
+            100 * n_antes / nrow(crecimiento_individual)))
+
+cat("\nPendiente estimada por grupo (puntos de logro por ensayo):\n")
+print(
+  crecimiento_individual %>%
+    group_by(agno, grado, area) %>%
+    summarise(n = n(),
+              slope_media = round(mean(slope_logro), 3),
+              slope_sd    = round(sd(slope_logro), 3),
+              pred_media  = round(mean(pred_final_logro), 1),
+              pct_en_borde = round(100 * mean(pred_final_logro %in% c(0, 100)), 1),
+              .groups = "drop") %>%
+    as.data.frame()
+)
 
 
 # ---- 4b. ÍNDICE INDIVIDUAL ENCOGIDO POR CONFIABILIDAD (NUEVO v5) ------
@@ -1239,6 +1411,47 @@ school_features <- school_features %>%
     conf_mean_logro = if (USAR_IRT) conf_mean_logro_irt  else conf_mean_logro_crudo,
     var_err_logro   = if (USAR_IRT) var_err_logro_irt    else var_err_logro_crudo
   )
+
+# ---- 5b-ter. Nivel del ensayo CENTRADO DENTRO DEL AÑO (NUEVO v7) ------
+# El problema que resuelve: el logro en los ensayos sube todos los años y
+# el SIMCE no lo sigue. En el panel de colegios con SIMCE observado el
+# logro IRT subió de 2023 a 2025 en los cuatro grupos, mientras el SIMCE
+# 2025 CAYÓ en tres de ellos. Un modelo entrenado con 2023-24, donde ambas
+# series suben juntas, proyecta a 2025 una subida que no ocurrió: sobre-
+# predice 5 a 6 puntos.
+#
+# Parte de esa deriva es composición (cada año entran colegios nuevos a
+# Santillana), parte es dificultad de las formas y parte puede ser real.
+# Separarlas no es posible con tres años. Lo que sí se puede es dejar de
+# leerla como nivel: centrando dentro de año x grado x área, el ensayo
+# aporta sólo la POSICIÓN RELATIVA del colegio entre sus pares de ese año,
+# y el nivel absoluto queda a cargo de `nivel_hist_colegio`. La deriva
+# común se cancela por construcción, sea cual sea su origen.
+#
+# Se calcula sin usar SIMCE y sólo con los ensayos del propio año, así que
+# está disponible al momento de predecir una ronda nueva: 03 puede
+# construirla igual (centrar los colegios del año que se predice entre sí).
+#
+# Se dejan las dos versiones —sobre el nivel encogido y sobre la
+# proyección al 6º ensayo— porque 02 compara ambas especificaciones.
+school_features <- school_features %>%
+  group_by(agno, grado, area) %>%
+  mutate(
+    mean_logro_enc_c   = mean_logro_enc - mean(mean_logro_enc, na.rm = TRUE),
+    pred_final_logro_c = pred_final_logro - mean(pred_final_logro, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+cat("\nDeriva del ensayo entre años (media del grupo que se descuenta al centrar):\n")
+print(
+  school_features %>%
+    group_by(agno, grado, area) %>%
+    summarise(n_colegios = n(),
+              media_logro_enc  = round(mean(mean_logro_enc, na.rm = TRUE), 1),
+              media_pred_final = round(mean(pred_final_logro, na.rm = TRUE), 1),
+              .groups = "drop") %>%
+    as.data.frame()
+)
 
 cat("\nConfiabilidad del mean_logro escolar (encogimiento del punto 2):\n")
 print(
