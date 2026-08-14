@@ -381,25 +381,18 @@ $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{co
 
 ## Calibración IRT: ¿aporta?
 
-[Comparación con y sin el insumo IRT, mismo modelo]{.eyebrow}
+[Correlación con el SIMCE del colegio, con y sin IRT]{.eyebrow}
 
 ```{r}
 #| fig-align: center
 mostrar_tabla(
-  "t_efecto_irt",
-  "MAE del modelo de nivel usando sólo logro crudo vs. usando el logro ajustado por IRT, mismo modelo y mismo año de prueba.",
-  "02_modelo_escolar.R -> metricas_validacion.csv")
+  "t_correlacion_irt",
+  "Correlación entre el logro promedio del colegio y su SIMCE promedio, medida con el logro crudo y con el logro ajustado por IRT.",
+  "01_figuras_presentacion.R -> school_model_data.rds")
 ```
 
-```{r}
-#| fig-align: center
-mostrar_grafico(
-  "g_efecto_irt",
-  "Logro crudo vs. logro ajustado por IRT, por colegio: la distancia a la diagonal es lo que corrige la calibración: color según cuán distinta era la dificultad de la forma rendida.",
-  "01_preparar_insumos_modelo.R -> comparacion_irt.rds")
-```
-
-El IRT gana en 3 de las 4 combinaciones (0,2–0,3 puntos de MAE). En 2° medio lenguaje el logro crudo ya rendía bien y el ajuste no mejora el MAE en esta prueba puntual — por eso el insumo combinado se encoge según confiabilidad relativa, en vez de reemplazar directamente el logro crudo por el IRT.
+- La correlación con el SIMCE **sube en las cuatro combinaciones** de grado × área: el logro calibrado es una señal más limpia del nivel real del colegio que el porcentaje de respuestas correctas.
+- La ganancia es mayor en **2° medio** (+0,04 y +0,05), donde las formas rendidas difieren más en dificultad; en 4° básico el logro crudo ya estaba bastante alineado.
 
 ## Modelo de nivel — la media del colegio
 
@@ -479,18 +472,6 @@ Supuesto explícito: el **ranking** de los ensayos dentro del colegio se parece 
 
 [SECCIÓN 4 · QUÉ TAN BIEN FUNCIONA]{.eyebrow}
 
-## Validación del modelo de nivel
-
-[Out-of-time, contra el año más reciente]{.eyebrow}
-
-```{r}
-#| fig-align: center
-mostrar_tabla(
-  "t_nivel",
-  "MAE y R² del modelo final en el año de prueba, con el MAE de referencia de modelo anterior y modelo 1 sobre el mismo universo de colegios.",
-  "02_modelo_escolar.R -> metricas_validacion.csv")
-```
-
 ## Comparación de escenarios
 
 [Tres formas de estimar el mismo puntaje]{.eyebrow}
@@ -515,16 +496,35 @@ mostrar_grafico(
   "01_figuras_presentacion.R -> comparacion_escenarios")
 ```
 
+- La regla de conversión fija (**modelo 1**) funciona razonablemente en 4° básico, pero se degrada fuerte en 2° medio: confirma el punto de la introducción — una conversión sin modelar el colegio no aguanta el cambio de contexto.
+- El **modelo final** mejora sobre el **modelo anterior** en la mayoría de grado × área.
+
+## ¿Cuántos quedan en Insuficiente?
+
+[La misma comparación, en la unidad que usa el colegio]{.eyebrow}
+
 ```{r}
 #| fig-align: center
 mostrar_tabla(
-  "t_comparacion_escenarios",
-  "MAE, R² y mejora porcentual del modelo final frente a modelo 1 y modelo anterior, por grado y área.",
-  "01_figuras_presentacion.R -> comparacion_escenarios")
+  "t_insuficiente",
+  "Porcentaje de estudiantes bajo el corte de Insuficiente según el SIMCE real y según cada uno de los 3 escenarios, con el error en puntos porcentuales.",
+  "01_figuras_presentacion.R -> niveles_logro.rds + predicciones individuales")
 ```
 
-- La regla de conversión fija (**modelo 1**) funciona razonablemente en 4° básico, pero se degrada fuerte en 2° medio (donde el R² incluso se vuelve negativo): confirma el punto de la sección de introducción — una conversión sin modelar el colegio no aguanta el cambio de contexto.
-- El **modelo final** mejora sobre el **modelo anterior** en la mayoría de grado × área; en 2° medio lenguaje queda levemente peor, consistente con lo visto en la lámina de calibración IRT.
+- Los dos modelos por capas quedan a **2–3 pp** del real en todas las combinaciones, y subestiman levemente el grupo en riesgo.
+- El **modelo 1** se desarma en 2° medio: subestima Insuficiente en 16 pp en lenguaje y lo **sobreestima en 43 pp** en matemática. Un colegio que planificara apoyos con esa cifra intervendría al doble de estudiantes de los que corresponde.
+
+## Validación del modelo de nivel
+
+[Out-of-time, contra el año más reciente]{.eyebrow}
+
+```{r}
+#| fig-align: center
+mostrar_tabla(
+  "t_nivel",
+  "MAE y R² del modelo final en el año de prueba, con el MAE de referencia de modelo anterior y modelo 1 sobre el mismo universo de colegios.",
+  "02_modelo_escolar.R -> metricas_validacion.csv")
+```
 
 ## Nivel: observado vs. predicho
 

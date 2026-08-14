@@ -173,24 +173,29 @@ val_colegio      <- leer_rds("validacion_por_colegio.rds")     # 04
 dens_validacion  <- leer_rds("dens_validacion.rds")            # 04
 anio_test        <- leer_rds("anio_test.rds")                  # 02
 niveles_logro    <- leer_rds("niveles_logro.rds")              # 04
-comparacion_irt  <- leer_rds("comparacion_irt.rds")            # 01 (calibración IRT)
 
 anio_test <- if (is.null(anio_test)) NA else anio_test
 
 # --- Insumos del escenario "modelo anterior" (sin IRT) ---
 diag_nivel_anterior <- leer_rds_de(dir_salidas_anterior, "diag_nivel.rds")
+pred_ind_anterior   <- leer_rds_de(dir_salidas_anterior, "predicciones_individual.rds")
 
 # --- Insumo del escenario "modelo 1" (regla de conversión Santillana) ---
 # Predicción pegada por evaluación en el consolidado de ensayos; se agrega
-# primero por estudiante y luego por colegio (así un estudiante con más
-# ensayos rendidos no pesa más que uno con uno solo).
-modelo1_colegio <- construir("modelo1_colegio",
+# a nivel de estudiante (así un estudiante con más ensayos rendidos no pesa
+# más que uno con uno solo). De acá salen tanto la predicción por colegio
+# como la clasificación por nivel de aprendizaje.
+modelo1_alumno <- construir("modelo1_alumno",
   list(if (file.exists(ruta_consolidado_ensayos)) TRUE else NULL, anio_test), {
   arrow::read_parquet(ruta_consolidado_ensayos) %>%
     filter(agno == anio_test, !is.na(simce_estimado_modelo1)) %>%
     mutate(rbd_revisado = as.numeric(rbd)) %>%
     group_by(rbd_revisado, grado, area, id_usuario_curso) %>%
-    summarise(pred_alu = mean(simce_estimado_modelo1, na.rm = TRUE), .groups = "drop") %>%
+    summarise(pred_alu = mean(simce_estimado_modelo1, na.rm = TRUE), .groups = "drop")
+})
+
+modelo1_colegio <- construir("modelo1_colegio", list(modelo1_alumno), {
+  modelo1_alumno %>%
     group_by(rbd_revisado, grado, area) %>%
     summarise(pred_modelo1 = mean(pred_alu, na.rm = TRUE), .groups = "drop")
 })
@@ -329,21 +334,26 @@ tablas$t_nivel <- construir("t_nivel", list(met_nivel), {
       `Colegios (prueba)` = n_test,
       `SIMCE predicho (promedio)` = round(media_pred_test, 1),
       `SIMCE real (promedio)` = round(media_obs_test, 1),
-      `MAE modelo final` = round(mae, 1),
-      `R² (prueba)` = round(r2_test, 2)
+      `R² (prueba)` = round(r2_test, 2),
+      `MAE modelo final` = round(mae, 2)
     )
 
   # Referencia de los otros 2 escenarios, sobre el universo comparable
   # (colegios de prueba con predicción de modelo anterior y modelo 1).
+  # El MAE del modelo final queda como última columna: es la lectura de
+  # cierre después de los dos escenarios de referencia.
   if (!is.null(mae_escenarios)) {
     ref <- mae_escenarios %>%
       filter(escenario %in% c("Modelo anterior", "Modelo 1")) %>%
       etiquetar() %>%
+      mutate(mae = round(mae, 2)) %>%
       select(grado, area, escenario, mae) %>%
       pivot_wider(names_from = escenario, values_from = mae,
                   names_prefix = "MAE ") %>%
       rename(Grado = grado, Área = area)
-    out <- out %>% left_join(ref, by = c("Grado", "Área"))
+    out <- out %>%
+      left_join(ref, by = c("Grado", "Área")) %>%
+      relocate(`MAE modelo final`, .after = last_col())
   }
   out
 })
@@ -495,20 +505,94 @@ tablas$t_comparacion_escenarios <- construir("t_comparacion_escenarios",
            `Mejora modelo final vs. modelo anterior (%)` = mejora_vs_anterior)
 })
 
-# --- 2.11 Efecto de la calibración IRT dentro del modelo final
-# Ablación interna de modelo_lme_alu_v2: mismo modelo, con y sin el insumo
-# IRT (mae_sin_irt / mae_con_irt ya vienen calculados en 02).
-tablas$t_efecto_irt <- construir("t_efecto_irt", list(met_nivel), {
-  faltan <- !all(c("mae_sin_irt", "mae_con_irt") %in% names(met_nivel))
-  if (faltan) return(NULL)
-  met_nivel %>%
+# --- 2.10b Nivel Insuficiente: real vs. los 3 escenarios
+# Traduce la comparación de escenarios a la unidad que usa el colegio:
+# qué porcentaje de estudiantes queda bajo el corte de Insuficiente
+# según cada forma de estimar el puntaje, y cuánto se aleja del real.
+#
+# ¡OJO! Los cortes están duplicados de 04_validacion_individual.R, que es
+# la fuente de verdad (son los oficiales de los Estándares de Aprendizaje
+# y NO se estiman de los datos). Si se corrigen allá, hay que corregirlos
+# acá también.
+CORTES_NIVEL <- tribble(
+  ~grado, ~area,        ~corte_elemental,
+  "4b",   "lenguaje",   241,
+  "4b",   "matematica", 245,
+  "2m",   "lenguaje",   250,
+  "2m",   "matematica", 252
+)
+
+# % bajo el corte de Elemental (= Insuficiente) sobre el mismo universo de
+# colegios validados que usa 04, para no mezclar error del modelo con
+# diferencias de composición.
+pct_insuficiente <- function(datos, columna_puntaje, colegios) {
+  datos %>%
+    inner_join(colegios, by = c("grado", "area", "rbd_revisado")) %>%
+    left_join(CORTES_NIVEL, by = c("grado", "area")) %>%
+    filter(!is.na(corte_elemental), !is.na({{ columna_puntaje }})) %>%
+    group_by(grado, area) %>%
+    summarise(pct = mean({{ columna_puntaje }} < corte_elemental), .groups = "drop")
+}
+
+tablas$t_insuficiente <- construir("t_insuficiente",
+  list(niveles_logro, val_colegio, pred_ind_anterior, modelo1_alumno, anio_test), {
+  colegios_validados <- val_colegio %>% distinct(grado, area, rbd_revisado)
+
+  # Real y modelo final ya vienen calculados en 04, sobre este universo.
+  base <- niveles_logro %>%
+    filter(as.character(nivel) == "Insuficiente") %>%
+    select(grado, area, pct_real = pct_obs, pct_final = pct_pred)
+
+  anterior <- pred_ind_anterior %>%
+    filter(agno == anio_test) %>%
+    pct_insuficiente(pred_B, colegios_validados) %>%
+    rename(pct_anterior = pct)
+
+  modelo1 <- modelo1_alumno %>%
+    pct_insuficiente(pred_alu, colegios_validados) %>%
+    rename(pct_modelo1 = pct)
+
+  base %>%
+    left_join(anterior, by = c("grado", "area")) %>%
+    left_join(modelo1, by = c("grado", "area")) %>%
     etiquetar() %>%
     arrange(grado, area) %>%
     transmute(
       Grado = grado, Área = area,
-      `MAE sin IRT` = round(mae_sin_irt, 1),
-      `MAE con IRT` = round(mae_con_irt, 1),
-      `Ganancia (puntos)` = round(mae_sin_irt - mae_con_irt, 2)
+      `Real` = sprintf("%.1f%%", 100 * pct_real),
+      `Modelo 1` = sprintf("%.1f%%", 100 * pct_modelo1),
+      `Modelo anterior` = sprintf("%.1f%%", 100 * pct_anterior),
+      `Modelo final` = sprintf("%.1f%%", 100 * pct_final),
+      `Error modelo 1 (pp)` = round(100 * (pct_modelo1 - pct_real), 1),
+      `Error modelo anterior (pp)` = round(100 * (pct_anterior - pct_real), 1),
+      `Error modelo final (pp)` = round(100 * (pct_final - pct_real), 1)
+    )
+})
+
+# --- 2.11 Efecto de la calibración IRT sobre la señal del ensayo
+# Correlación entre el logro promedio del colegio y su SIMCE promedio,
+# con el logro crudo y con el logro ajustado por IRT. Es la lectura más
+# directa de si la calibración mejora la señal que entra al modelo:
+# mismo colegio, misma variable dependiente, sólo cambia cómo se mide el
+# logro. Se calcula sobre todos los años con SIMCE observado.
+tablas$t_correlacion_irt <- construir("t_correlacion_irt", list(school_model), {
+  school_model %>%
+    filter(!is.na(promedio_simce), !is.na(mean_logro_crudo), !is.na(mean_logro_irt)) %>%
+    group_by(grado, area) %>%
+    summarise(
+      n_colegios = n(),
+      r_crudo = cor(mean_logro_crudo, promedio_simce),
+      r_irt   = cor(mean_logro_irt, promedio_simce),
+      .groups = "drop"
+    ) %>%
+    etiquetar() %>%
+    arrange(grado, area) %>%
+    transmute(
+      Grado = grado, Área = area,
+      `Colegios` = n_colegios,
+      `r con logro crudo` = round(r_crudo, 3),
+      `r con logro IRT` = round(r_irt, 3),
+      `Ganancia` = round(r_irt - r_crudo, 3)
     )
 })
 
@@ -866,27 +950,6 @@ gg$g_comparacion_escenarios <- construir("g_comparacion_escenarios",
                                  "Modelo final" = COL[["lago"]])) +
     labs(x = NULL, y = "MAE de nivel-colegio (puntos SIMCE)") +
     theme(axis.text.x = element_blank()) +
-    tema_pres
-})
-
-# --- 3.16 Efecto de la calibración IRT: logro crudo vs. logro IRT
-gg$g_efecto_irt <- construir("g_efecto_irt", list(comparacion_irt), {
-  comparacion_irt %>%
-    filter(agno == max(agno)) %>%
-    etiquetar() %>%
-    mutate(text = paste0("RBD ", rbd_revisado, " · ", grado, " · ", area,
-                         "<br>Logro crudo: ", round(pct_crudo, 1), "%",
-                         "<br>Logro IRT: ", round(pct_irt, 1), "%",
-                         "<br>Dificultad relativa de la forma: ",
-                         round(dif_puntos, 1))) %>%
-    ggplot(aes(pct_crudo, pct_irt, colour = dif_puntos, text = text)) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed",
-                colour = COL[["coral"]]) +
-    geom_point(alpha = 0.6, size = 1.3) +
-    scale_colour_gradient2(low = COL[["lago"]], mid = COL[["bruma"]],
-                           high = COL[["coral"]], midpoint = 0) +
-    facet_grid(area ~ grado) +
-    labs(x = "Logro crudo del colegio (%)", y = "Logro IRT del colegio (%)") +
     tema_pres
 })
 
