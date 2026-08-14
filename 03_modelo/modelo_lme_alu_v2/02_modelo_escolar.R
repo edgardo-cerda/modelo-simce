@@ -129,21 +129,19 @@ var_logro <- if (USAR_LOGRO_ENCOGIDO) "mean_logro_enc" else "mean_logro"
 formula_base <- as.formula(paste(
   "promedio_simce ~", var_logro, "+ nivel_hist_colegio"
 ))
-formula_ctx  <- update(formula_base, . ~ . + contexto_nivel)
 
-formula_modelo <- if (INCLUIR_CONTEXTO_APARTE) formula_ctx else formula_base
+# `formula_modelo` se define más abajo, a partir de SPEC_ELEGIDA (secc. 0b).
 
 # Especificaciones que se ajustan sólo para AUDITAR (no para elegir:
 # elegir mirando el año de prueba sería seleccionar sobre el test).
 # Se imprimen sus MAE junto al del modelo para poder revisar la decisión
 # con datos frescos en cada corrida.
-# OJO: la v4 completa llevaba además `slope_logro`, pero esa variable ya no
-# existe: el modelo de crecimiento de 01 (secc. 4) dejó de estimar pendiente
-# —sólo interceptos por colegio y por estudiante—, así que ni `school_features`
-# ni `ind_features` la traen. Dejarla en la fórmula no rompía nada porque el
-# tryCatch de más abajo la convertía en NA, pero la columna `mae_v4_completa`
-# salía NA en todas las corridas y la auditoría no auditaba nada. Se ajusta lo
-# que sí es reproducible con los datos actuales: la v4 sin la pendiente.
+# OJO: la v4 completa llevaba además `slope_logro`. Desde v7 esa variable
+# vuelve a existir —el modelo de crecimiento de 01 estima pendiente sobre
+# el logro ajustado por IRT— pero se deja fuera de esta fórmula a
+# propósito: con `pred_final_logro` (que ya ES la proyección al 6º ensayo)
+# la pendiente entra dos veces. La comparación que importa la hace la
+# tabla de especificaciones de la sección 0b.
 #
 # `v5_con_pred_final` es la especificación que estuvo vigente hasta que se
 # sacó `pred_final_logro` por colinealidad (ver el encabezado). Se deja acá
@@ -158,15 +156,58 @@ formula_modelo <- if (INCLUIR_CONTEXTO_APARTE) formula_ctx else formula_base
 # aportó la calibración del punto de vista del error de predicción, y por
 # eso conviene tenerla impresa en cada corrida y no sólo el día que se
 # hizo el cambio.
+# CAMBIO v7: sale `n_evals_prom` de la auditoría. Entraba de forma aditiva
+# —un término lineal en "cuántos ensayos rindió el colegio en promedio",
+# que nunca tuvo lectura defendible— y el número de ensayos ya entra por
+# donde corresponde: la precisión de la medida, vía el encogimiento por
+# confiabilidad de 01 (secc. 5b-bis) y, desde v7, vía la ponderación por
+# 1/se^2 del modelo de crecimiento. Con `pred_final_logro` en la fórmula,
+# mantenerlo además como regresor sería contar dos veces lo mismo.
 formulas_auditoria <- list(
   v4_sin_slope      = promedio_simce ~ mean_logro + pred_final_logro +
-                       n_evals_prom + nivel_hist_colegio,
+                       nivel_hist_colegio,
   v5_sin_encoger    = promedio_simce ~ mean_logro + nivel_hist_colegio,
   v5_con_pred_final = update(formula_base, . ~ . + pred_final_logro),
   v5_con_contexto   = update(formula_base, . ~ . + contexto_nivel),
   v6_sin_irt        = promedio_simce ~ mean_logro_crudo_enc + nivel_hist_colegio,
   v6_con_irt        = promedio_simce ~ mean_logro_irt_enc + nivel_hist_colegio
 )
+
+# ---- 0b. Especificaciones a comparar (NUEVO v7) ----------------------
+# El problema que motiva esta comparación: el logro en los ensayos sube
+# todos los años y el SIMCE no lo sigue, así que un modelo que lee el
+# nivel del ensayo como nivel absoluto proyecta subidas que no ocurren
+# (sesgo de +5 a +6 puntos en 2025, ver el pie del script).
+#
+# `*_c` son las versiones centradas DENTRO de año x grado x área que
+# construye 01 (secc. 5b-ter): el ensayo aporta sólo la posición relativa
+# del colegio entre sus pares de ese año y el nivel absoluto queda a cargo
+# de `nivel_hist_colegio`. La deriva común del año se cancela por
+# construcción.
+ESPECIFICACIONES <- list(
+  actual = promedio_simce ~ mean_logro_enc + nivel_hist_colegio,
+  A      = promedio_simce ~ mean_logro_enc + pred_final_logro + nivel_hist_colegio,
+  B      = promedio_simce ~ pred_final_logro + nivel_hist_colegio,
+  C      = promedio_simce ~ mean_logro_enc_c + nivel_hist_colegio,
+  D      = promedio_simce ~ pred_final_logro_c + nivel_hist_colegio,
+  E      = promedio_simce ~ mean_logro_enc_c + nivel_hist_colegio + agno
+)
+
+# Especificación que se usa para el modelo de producción. Se elige por la
+# VENTANA A (entrena 2023, predice 2024); la ventana B (entrena 2023-24,
+# predice 2025) se deja como held-out y sólo se reporta. Elegir mirando la
+# ventana B sería seleccionar sobre el test.
+SPEC_ELEGIDA <- "actual"
+
+stopifnot("SPEC_ELEGIDA no está en ESPECIFICACIONES" =
+            SPEC_ELEGIDA %in% names(ESPECIFICACIONES))
+
+# La fórmula de producción sale de la especificación elegida. El switch de
+# contexto aparte se mantiene y se aplica sobre ella.
+formula_modelo <- ESPECIFICACIONES[[SPEC_ELEGIDA]]
+if (INCLUIR_CONTEXTO_APARTE) {
+  formula_modelo <- update(formula_modelo, . ~ . + contexto_nivel)
+}
 
 # VIF de la fórmula elegida. Se imprime en cada corrida porque el motivo por
 # el que salió `pred_final_logro` fue exactamente éste, y porque cualquier
@@ -186,6 +227,107 @@ cat("Fórmula del modelo:\n  "); print(formula_modelo)
 cat("\n")
 
 grupos <- school_model_data %>% distinct(grado, area)
+
+# ---- 1b. Comparación de especificaciones en dos ventanas (NUEVO v7) ---
+# Con tres años sólo hay dos cortes out-of-time posibles. Se usan los dos
+# y con roles distintos:
+#
+#   Ventana A: entrena 2023        -> predice 2024   (para ELEGIR)
+#   Ventana B: entrena 2023 + 2024 -> predice 2025   (held-out, sólo se
+#                                                     reporta)
+#
+# Se reporta MAE y también SESGO: el síntoma del problema de deriva es el
+# sesgo, y una especificación puede corregirlo sin mover mucho el MAE.
+evaluar_spec <- function(f, datos_grupo, anios_train, anio_eval) {
+  train <- datos_grupo %>% filter(agno %in% anios_train, !is.na(promedio_simce))
+  test  <- datos_grupo %>% filter(agno == anio_eval,     !is.na(promedio_simce))
+
+  if (nrow(train) < 20 || nrow(test) < 10) {
+    return(tibble(n_train = nrow(train), n_test = nrow(test),
+                  mae = NA_real_, sesgo = NA_real_, r2 = NA_real_,
+                  nota = "datos insuficientes"))
+  }
+  # Un término de año necesita al menos dos años de entrenamiento; con uno
+  # solo queda aliaseado con el intercepto. Se marca en vez de devolver un
+  # NA sin explicación.
+  if ("agno" %in% all.vars(f) && n_distinct(train$agno) < 2) {
+    return(tibble(n_train = nrow(train), n_test = nrow(test),
+                  mae = NA_real_, sesgo = NA_real_, r2 = NA_real_,
+                  nota = "no estimable con 1 año de train"))
+  }
+
+  res <- tryCatch({
+    m    <- lm(f, data = train)
+    pred <- predict(m, newdata = test)
+    obs  <- test$promedio_simce
+    tibble(n_train = nrow(train), n_test = nrow(test),
+           mae   = mean(abs(pred - obs)),
+           sesgo = mean(pred - obs),
+           r2    = 1 - sum((obs - pred)^2) / sum((obs - mean(obs))^2),
+           nota  = NA_character_)
+  }, error = function(e) {
+    tibble(n_train = nrow(train), n_test = nrow(test),
+           mae = NA_real_, sesgo = NA_real_, r2 = NA_real_,
+           nota = paste("error:", conditionMessage(e)))
+  })
+  res
+}
+
+anios_ord <- sort(anios)
+ventanas <- list(
+  A = list(train = anios_ord[1],                  eval = anios_ord[2]),
+  B = list(train = anios_ord[1:(length(anios_ord) - 1)], eval = anio_test)
+)
+
+comparacion_specs <- map_dfr(names(ventanas), function(v) {
+  map_dfr(seq_len(nrow(grupos)), function(i) {
+    g <- grupos$grado[i]; a <- grupos$area[i]
+    datos_grupo <- school_model_data %>% filter(grado == g, area == a)
+    map_dfr(names(ESPECIFICACIONES), function(s) {
+      evaluar_spec(ESPECIFICACIONES[[s]], datos_grupo,
+                   ventanas[[v]]$train, ventanas[[v]]$eval) %>%
+        mutate(ventana = v, spec = s, grado = g, area = a,
+               anios_train = paste(ventanas[[v]]$train, collapse = "+"),
+               anio_eval = ventanas[[v]]$eval, .before = 1)
+    })
+  })
+})
+
+cat("=============================================================\n")
+cat("COMPARACIÓN DE ESPECIFICACIONES (out-of-time)\n")
+cat("=============================================================\n")
+for (v in names(ventanas)) {
+  cat(sprintf("\nVentana %s: entrena %s -> predice %s\n", v,
+              paste(ventanas[[v]]$train, collapse = "+"), ventanas[[v]]$eval))
+  print(
+    comparacion_specs %>%
+      filter(ventana == v) %>%
+      group_by(spec) %>%
+      summarise(grupos = sum(!is.na(mae)),
+                mae_medio    = round(mean(mae, na.rm = TRUE), 2),
+                sesgo_medio  = round(mean(sesgo, na.rm = TRUE), 2),
+                sesgo_abs    = round(mean(abs(sesgo), na.rm = TRUE), 2),
+                r2_medio     = round(mean(r2, na.rm = TRUE), 3),
+                nota = first(na.omit(nota)) %||% "",
+                .groups = "drop") %>%
+      arrange(mae_medio) %>%
+      as.data.frame()
+  )
+}
+
+cat("\nDetalle por grupo (MAE / sesgo):\n")
+print(
+  comparacion_specs %>%
+    filter(!is.na(mae)) %>%
+    mutate(celda = sprintf("%.1f / %+.1f", mae, sesgo)) %>%
+    select(ventana, grado, area, spec, celda) %>%
+    pivot_wider(names_from = spec, values_from = celda) %>%
+    arrange(ventana, grado, area) %>%
+    as.data.frame()
+)
+
+cat("\nEspecificación usada para el modelo de producción:", SPEC_ELEGIDA, "\n")
+cat("(se elige por la ventana A; la B queda como held-out)\n\n")
 
 modelos    <- list()
 resultados <- list()
@@ -363,6 +505,8 @@ saveRDS(modelos, dir_salidas %>% file.path("modelos_escolares.rds"))
 saveRDS(diag_plot_data, dir_salidas %>% file.path("diag_nivel.rds"))  # lo usa 05
 saveRDS(anio_test, dir_salidas %>% file.path("anio_test.rds"))  # lo reusa 04
 write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv"))
+write_csv(comparacion_specs,
+          dir_salidas %>% file.path("comparacion_especificaciones.csv"))
 
 cat("\nListo. Modelos de NIVEL guardados en",
     dir_salidas %>% file.path("modelos_escolares.rds"), "\n")
