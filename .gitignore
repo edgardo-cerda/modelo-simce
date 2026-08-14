@@ -69,3 +69,5 @@ outputs/
 # Reportes renderizados desde los .Rmd de 01_preparar_datos. Son salidas de
 # build (varios MB cada una) y se regeneran con knit; no se versionan.
 01_preparar_datos/*.html
+
+install.cmd
