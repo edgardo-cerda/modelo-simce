@@ -571,20 +571,30 @@ tablas$t_insuficiente <- construir("t_insuficiente",
 
 # --- 2.11 Efecto de la calibración IRT sobre la señal del ensayo
 # Correlación entre el logro promedio del colegio y su SIMCE promedio,
-# con el logro crudo y con el logro ajustado por IRT. Es la lectura más
-# directa de si la calibración mejora la señal que entra al modelo:
-# mismo colegio, misma variable dependiente, sólo cambia cómo se mide el
-# logro. Se calcula sobre todos los años con SIMCE observado.
-tablas$t_correlacion_irt <- construir("t_correlacion_irt", list(school_model), {
-  school_model %>%
-    filter(!is.na(promedio_simce), !is.na(mean_logro_crudo), !is.na(mean_logro_irt)) %>%
-    group_by(grado, area) %>%
-    summarise(
-      n_colegios = n(),
-      r_crudo = cor(mean_logro_crudo, promedio_simce),
-      r_irt   = cor(mean_logro_irt, promedio_simce),
-      .groups = "drop"
-    ) %>%
+# medida con el logro crudo y con el logro calibrado por IRT. Es la
+# lectura más directa de si la calibración mejora la señal que entra al
+# modelo: mismo colegio, misma variable dependiente, sólo cambia cómo se
+# mide el logro.
+#
+# NÚMEROS CONGELADOS, y por qué. Hasta la v8 esta tabla se calculaba en
+# vivo desde `school_model_data.rds`, que traía las DOS versiones del
+# nivel escolar (`mean_logro_crudo` y `mean_logro_irt`). La v9 congeló el
+# IRT y borró la rama cruda: sostener la comparación viva obligaba a
+# calcular todo el pipeline por duplicado en cada corrida, para un
+# resultado que ya decidió y no vuelve a cambiar.
+#
+# Los valores de abajo se midieron sobre los mismos datos (2023-2025,
+# todos los colegios con SIMCE observado) en la última corrida que tenía
+# ambas columnas. Si algún día se recalcula, hay que volver a activar la
+# rama cruda en 01 y rehacer la medición — no editar estos números a mano.
+tablas$t_correlacion_irt <- construir("t_correlacion_irt", list(), {
+  tribble(
+    ~grado, ~area,        ~n_colegios, ~r_crudo, ~r_irt,
+    "2m",   "lenguaje",   325,         0.740,    0.783,
+    "2m",   "matematica", 287,         0.655,    0.705,
+    "4b",   "lenguaje",   405,         0.701,    0.713,
+    "4b",   "matematica", 393,         0.760,    0.773
+  ) %>%
     etiquetar() %>%
     arrange(grado, area) %>%
     transmute(

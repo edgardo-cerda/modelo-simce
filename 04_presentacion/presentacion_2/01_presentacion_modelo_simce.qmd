@@ -364,8 +364,9 @@ $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{co
 ::: incremental
 - **Un modelo por grado × área.** La relación entre ensayo y SIMCE no es la misma en 4° básico que en 2° medio, ni en lenguaje que en matemática.
 - **Modelos lineales y mixtos.** Regresión para el nivel y el ancho; modelos mixtos donde hace falta encoger estimaciones ruidosas hacia un promedio razonable.
+- **Cada cosa se estima donde hay datos.** Los efectos de contexto salen del universo nacional (~6.400 colegios) y llegan al modelo final convertidos en un número. Las fórmulas finales, que se ajustan sobre 150–220 colegios, se mantienen mínimas.
 - **Sólo información disponible al predecir.** Ventana expansiva en todo lo histórico y contexto del colegio rezagado.
-- **Validación out-of-time**, siempre contra baselines simples.
+- **Validación out-of-time**, siempre contra baselines simples. Con tres años y dos ventanas, diferencias de MAE bajo medio punto se tratan como empates: se decide por interpretabilidad y estabilidad, no persiguiendo el indicador.
 :::
 
 ## Calibración IRT de los ensayos
@@ -376,7 +377,8 @@ $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{co
 - Cada ensayo tiene su propia **forma** (batería de ítems), y las formas cambian de dificultad entre año y ronda. El **logro crudo** (% de respuestas correctas) de dos estudiantes que rindieron formas distintas no es directamente comparable.
 - Se ajusta un **modelo IRT concurrente**: todas las formas se calibran juntas, en una escala común de dificultad de ítems.
 - De ahí sale $\theta$ (habilidad estimada) y su error estándar para cada estudiante, controlando por qué ítems específicos rindió.
-- $\theta$ se traduce a un logro ajustado (`mean_logro_irt`) y se **encoge** con el logro crudo según la confiabilidad relativa de cada uno: donde el ajuste IRT es más confiable, pesa más.
+- $\theta$ se traduce a **puntaje verdadero**: qué porcentaje del banco completo de ítems del año contestaría bien un estudiante con esa habilidad. Queda en la misma escala 0–100 de siempre, pero ya no depende de qué ensayos le tocaron.
+- Esa medida —`mean_logro`— es la única que usa el modelo. La dificultad de la batería aplicada llegaba a explicar entre **2,4% y 13,4%** de la varianza del logro entre colegios: eso es lo que la calibración neutraliza.
 :::
 
 ## Calibración IRT: ¿aporta?
@@ -387,8 +389,8 @@ $$\text{puntaje}_i \;=\; \hat{\mu}_{\text{colegio}} \;+\; \hat{\sigma}_{\text{co
 #| fig-align: center
 mostrar_tabla(
   "t_correlacion_irt",
-  "Correlación entre el logro promedio del colegio y su SIMCE promedio, medida con el logro crudo y con el logro ajustado por IRT.",
-  "01_figuras_presentacion.R -> school_model_data.rds")
+  "Correlación entre el logro promedio del colegio y su SIMCE promedio, medida con el logro crudo y con el logro calibrado por IRT.",
+  "01_figuras_presentacion.R (medición congelada, ver nota en el script)")
 ```
 
 - La correlación con el SIMCE **sube en las cuatro combinaciones** de grado × área: el logro calibrado es una señal más limpia del nivel real del colegio que el porcentaje de respuestas correctas.
@@ -398,42 +400,44 @@ mostrar_tabla(
 
 [Pieza 1 de 3]{.eyebrow}
 
-Una regresión lineal por grado × área:
+Una regresión lineal por grado × área, con **dos** predictores:
 
 ```
-promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
-                 n_evals + colegio_efecto_historico
+promedio_simce ~ mean_logro_enc + nivel_hist_colegio
 ```
 
-- Se utiliza información a nivel de estudiante y a nivel de colegio
-
+::: incremental
+- **Lo que trae el ensayo de este año** y **lo que se sabe del colegio de antes**. Nada más.
+- La fórmula es mínima *acá* porque acá hay entre 150 y 220 colegios por grupo. Cada grado de libertad se paga caro.
+- Ninguno de los dos términos es una variable cruda: **cada uno empaqueta un modelo estimado donde sí hay datos**.
 - Validación **out-of-time**: se entrena excluyendo el año más reciente y se evalúa contra él.
+:::
 
+## Qué hay dentro de cada término
 
-## Variables del modelo de nivel
+[La estructura vive donde están los datos, no en la fórmula final]{.eyebrow}
 
-[La materia prima a nivel individual]{.eyebrow}
+`mean_logro_enc` — el ensayo de este año:
 
-Por año × grado × área:
+- Habilidad calibrada por IRT, traducida a puntaje verdadero sobre el banco completo (lámina anterior).
+- **Encogida hacia el promedio de su grupo** según la confiabilidad de la medición: un colegio medido con pocos alumnos o con resultados muy dispersos se acerca al promedio, y el modelo se apoya más en su historia.
+- Ahí entra el **número de ensayos rendidos**, por la puerta correcta: no como un término que suba o baje el SIMCE, sino como precisión de la medida.
 
-- `mean_logro`: promedio de logro en los ensayos del año, **combinando logro crudo y logro ajustado por IRT** según su confiabilidad relativa (lámina anterior).
-- `pred_final_logro` y `slope_logro`: nivel proyectado y pendiente de mejora, de un **modelo mixto de crecimiento** que estabiliza a quienes rinden pocos ensayos. Se proyecta al 6to ensayo.
-- `n_evals`: cuántos ensayos rindió.
+## Qué hay dentro de cada término (cont.)
 
-## Variables del modelo de nivel (cont)
+[La estructura vive donde están los datos, no en la fórmula final]{.eyebrow}
 
-[La materia prima a nivel colegio]{.eyebrow}
+`nivel_hist_colegio` — el colegio de antes:
 
-Por año × grado × área:
-
-- `colegio_efecto_historico`: nivel persistente del colegio, estimado sobre el **universo nacional** de años anteriores:
+- Nivel persistente, estimado sobre el **universo nacional** (~6.400 colegios de 4° básico) de años anteriores:
 
 ```
 promedio_simce ~ año + GSE + dependencia + ruralidad + (1 | colegio)
 ```
 
 - Un colegio **sin historia** recibe lo esperado para su contexto; uno con **historia larga** queda dominado por su propia evidencia.
-- Todo lo histórico usa **ventana expansiva**: solo años anteriores al que se predice.
+- Los efectos de GSE, dependencia y ruralidad se estiman **a nivel nacional y se transfieren**, porque la base Santillana no tiene variación suficiente en esas variables (57-63% particular pagado, 1-4% rural).
+- Todo lo histórico usa **ventana expansiva**: sólo años anteriores al que se predice.
 
 
 ## Modelo de dispersión — el ancho del colegio
@@ -444,11 +448,13 @@ Una regresión por grado × área, con la **desviación estándar interna** como
 
 ```
 sd_simce ~ sd_entre_estud + iqr_logro_ensayo + sd_hist_colegio +
-           mean_logro + colegio_efecto_historico
+           mean_logro
 ```
 
-- Variables de ensayo agregadas, más características de **dispersión**: heterogeneidad de los ensayos este año (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad histórica (`sd_hist_colegio`).
+- Heterogeneidad de los ensayos **este año** (`sd_entre_estud`, `iqr_logro_ensayo`) y heterogeneidad **histórica** del colegio (`sd_hist_colegio`), que resulta ser el predictor más informativo: lo heterogéneo que es un colegio es bastante persistente.
+- `mean_logro` entra porque la dispersión depende del nivel: los colegios muy arriba o muy abajo tienen menos recorrido (**efecto piso/techo**).
 - **Ponderada por número de alumnos**: la sd de un colegio de 20 alumnos es mucho más ruidosa que la de uno de 200.
+- Cuatro términos lineales, un coeficiente por predictor. Se probó con splines sobre el nivel y no se pagó: dentro del rango de colegios que cubre la base, la relación es monótona.
 
 
 ## Predicción individual — matching por percentil
@@ -628,15 +634,43 @@ Los cortes son los oficiales de los **Estándares de Aprendizaje**, no salen de 
 
 - **La predicción individual asume ranking perfecto** entre ensayo y SIMCE: cada puntaje es una posición esperada dentro del curso, menos precisa de lo que sugiere su apariencia de número exacto.
 - **La forma de la distribución es una plantilla nacional**, no la del propio colegio. Con más años acumulados podría usarse la forma histórica de cada colegio.
-- **La pendiente de mejora se estima por colegio, no por estudiante** (muchos rinden un solo ensayo).
+- **El modelo no estima tendencia por colegio.** Se probó con el panel nacional de SIMCE (~6.000 colegios, 4 años) y no hay señal aprovechable: la pendiente propia de un colegio es en un 85–95% ruido de muestreo, y agregarla no mejora la predicción.
 - **El error remanente está sobre todo en el modelo de colegio** (media y ancho), no en el reparto hacia los estudiantes: ahí conviene invertir la próxima iteración.
+
+## Limitaciones de diseño (cont.) {.limitaciones}
+
+[La que más pesa hoy]{.eyebrow}
+
+- **El logro de los ensayos sube todos los años y el SIMCE no lo sigue.** En el panel de colegios con SIMCE observado el logro subió entre 2023 y 2025 en los cuatro grupos, mientras el SIMCE 2025 cayó en tres.
+- Un modelo entrenado con los años en que ambas series suben juntas **sobrepredice**: el sesgo out-of-time es de **+4 a +6 puntos**, sobre un error medio de ~10. Alrededor de la mitad del error no es ruido.
+- Parte de esa deriva es **composición** (cada año entran colegios nuevos a la base), parte es **dificultad de las formas** y parte puede ser real. Separarlas con tres años no es posible.
+- Está mitigado —el modelo usa el nivel histórico como ancla— pero **no resuelto**. Es el primer pendiente de la próxima versión.
+
+## Por qué no podemos separarlas {.limitaciones}
+
+[Los ensayos casi no comparten ítems entre años]{.eyebrow}
+
+- La calibración IRT pone en una escala común todas las formas **de un mismo año**, apoyándose en los **estudiantes comunes** (cada par de ensayos comparte entre 1.400 y 5.900 alumnos). Dentro del año, el problema está resuelto.
+- **Entre años no hay ese puente.** Los alumnos son otros, y los ítems casi no se repiten: de ~240 ítems por año, sólo el Ensayo 1 de lenguaje reaparece (40 ítems en 2° medio, 35 en 4° básico 2023–24). En **matemática el solapamiento es cero** en todos los pares de años.
+- Sin ítems ancla, $\theta$ queda estandarizada **dentro de cada año**: por construcción, el nivel no es comparable entre años. El modelo no puede distinguir "esta cohorte rindió mejor" de "esta batería era más fácil".
+
+## Por qué no podemos separarlas (cont.) {.limitaciones}
+
+[Una salvedad importante sobre los identificadores]{.eyebrow}
+
+- No sabemos si ese cero es **real** o de **registro**. Los `item_id` son códigos de banco y están fuertemente estratificados por año: los de 2023 ocupan un rango, los de 2024 otro, los de 2025 otro. Es el patrón esperable si el identificador se asigna **al cargar el ítem** y no a su contenido.
+- Si es así, un ítem reutilizado que se vuelve a subir entra como **ítem nuevo**, y habría anclas que no estamos usando. Con los datos actuales no se puede distinguir un caso del otro: haría falta el **contenido o un identificador estable de ítem**.
+- La distinción no es menor. Si el solapamiento real existe, **corregir la deriva es un problema de metadatos**, no de rediseño de los ensayos — y sería la mejora más barata disponible.
+- Mientras tanto, el Ensayo 1 de lenguaje sí ofrece un ancla verificada en 2° medio para los tres años: es por donde conviene empezar.
 
 
 ## Pendientes y siguientes hitos {.smaller}
 
 ::: incremental
+- **Corregir la deriva entre años**, que es la mitad del error actual: anclar el nivel del año a la serie nacional del SIMCE en vez de dejar que lo fije el ensayo
+- **Pedir a Santillana un identificador estable de ítem** (o el contenido), para saber si el cero de solapamiento entre años es real o de registro
+- **Enlazar la escala IRT entre años.** Hoy $\theta$ sólo es comparable dentro de un año. El Ensayo 1 de lenguaje se repite idéntico entre 2023 y 2025, así que en 2° medio hay un ancla verificada para intentarlo
 - Completar la recuperación de RBD para los colegios pendientes de revisión manual
-- Ajustar/probar nuevas especificaciones o variables predictoras
 - Extender la calibración IRT a nuevas formas a medida que se agregan ensayos
 - Validar el modelo con un nuevo lote de ensayos
 - Generar código final para predicciones 2026
