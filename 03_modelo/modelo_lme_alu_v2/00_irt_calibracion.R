@@ -59,24 +59,44 @@
 # -------------------------------------------------------------
 # El enlace ENTRE AÑOS. No hay personas comunes entre años (los 4b de
 # 2024 no son los 4b de 2025) y de ítems comunes sólo existe el Ensayo 1
-# de lenguaje, repetido idéntico en 2023-2025 (2m) y 2023-2024 (4b). En
-# matemática no se repite nada. Por lo tanto theta queda en una escala
-# propia de cada año x grado x área: sirve para comparar estudiantes y
-# colegios DENTRO de un año, no para comparar niveles entre años. La
-# deriva de escala entre años que 02 marca como pendiente sigue abierta.
+# de lenguaje: 40 ítems repetidos en 2m los tres años (2023-2024-2025) y
+# 35 en 4b entre 2023 y 2024. En matemática el solapamiento es CERO en
+# los seis pares de años. Por lo tanto theta queda en una escala propia
+# de cada año x grado x área: sirve para comparar estudiantes y colegios
+# DENTRO de un año, no para comparar niveles entre años. La deriva de
+# escala entre años que 02 marca como pendiente sigue abierta.
+#
+# SALVEDAD sobre ese cero, que conviene tener presente antes de concluir
+# que las formas son enteramente nuevas cada año: puede ser un artefacto
+# del identificador. Los `item_id` son códigos de banco (5.6M a 7.4M) y
+# están fuertemente estratificados por año — 2023 ocupa 5.62-5.98M, 2024
+# llega hasta 6.70M, 2025 hasta 7.39M — que es el patrón esperable si el
+# ID se asigna al CARGAR el ítem y no a su contenido. Con ese esquema, un
+# ítem reutilizado que se vuelve a subir entra como ítem nuevo y su ancla
+# se pierde en el registro, no en el diseño.
+#
+# El caso del Ensayo 1 de lenguaje muestra que el sistema SÍ puede
+# preservar el ID cuando se reutiliza la forma completa, así que las dos
+# hipótesis siguen vivas y estos datos no las separan: haría falta el
+# contenido del ítem o un identificador estable. La distinción importa
+# porque cambia el costo de la solución — si hay solapamiento real
+# oculto, enlazar los años es un problema de metadatos y no exige
+# rediseñar los ensayos.
 #
 # -------------------------------------------------------------
 # SALIDAS (en <ruta_outputs>/modelo_lme_alu_v2/)
 #   - irt_theta.rds      : 1 fila por estudiante x año x grado x área.
 #                          `theta` (EAP) y `se_theta`. Es el insumo que
-#                          reemplazaría a `porcentaje_logro` en 01.
-#   - irt_theta_forma.rds: 1 fila por estudiante x forma (o sea, por
-#                          ensayo rendido), con `theta_forma`,
-#                          `se_theta_forma` y `n_evaluacion`. Son medidas
-#                          repetidas en la MISMA escala theta, puntuadas
-#                          con los parámetros ya calibrados: es el insumo
-#                          del modelo de crecimiento de 01.
+#                          reemplaza a `porcentaje_logro` en 01.
 #   - irt_items.rds      : parámetros a y b por ítem, con su forma.
+#
+# NOTA (v9): hasta la v8 este script producía además `irt_theta_forma.rds`
+# —un theta por estudiante x forma rendida— que alimentaba el modelo de
+# crecimiento de 01. Ese modelo se eliminó: sus salidas
+# (`pred_final_logro`, `slope_logro`) no entraban en ninguna fórmula de
+# producción. Con él se fue su único consumidor, así que el bloque que
+# puntuaba cada forma por separado (un `fscores` extra por forma y grupo,
+# la parte más lenta después de la calibración misma) también salió.
 #   - irt_formas.rds     : dificultad media de cada forma en escala
 #                          theta, junto al logro medio observado. Es la
 #                          tabla que muestra cuánto se corrige.
@@ -298,7 +318,6 @@ componentes_conexas <- function(formas, pares_enlazados) {
 grupos <- inventario %>% distinct(agno, grado, area) %>% arrange(agno, grado, area)
 
 theta_todo   <- list()
-theta_forma_todo <- list()
 items_todo   <- list()
 formas_todo  <- list()
 linking_todo <- list()
@@ -462,66 +481,6 @@ for (i in seq_len(nrow(grupos))) {
 
   theta_todo[[clave_grupo]] <- theta_grupo
 
-  # --- 4d-bis. Theta por ESTUDIANTE x FORMA (NUEVO) ---------------------
-  # El theta de 4d agrupa todas las respuestas del estudiante en el año:
-  # es una sola medida, así que no sirve para modelar crecimiento entre
-  # ensayos. Acá se puntúa cada forma por separado, dejando FIJOS los
-  # parámetros de ítem ya calibrados: el resultado son medidas repetidas
-  # del mismo estudiante en la MISMA escala theta, que es exactamente lo
-  # que la calibración concurrente habilita y lo que 01 necesita para
-  # ajustar una pendiente.
-  #
-  # La matriz de cada forma conserva las columnas de TODO el banco y deja
-  # en NA los ítems que esa forma no administró. No se usa un mapa
-  # item -> forma: si dos formas comparten ítems de anclaje, ese mapa
-  # asignaría el ítem a una sola forma y perdería respuestas. Se arma
-  # directo desde `respuestas`, que ya trae el par (ítem, forma) tal como
-  # se rindió.
-  cols_banco <- colnames(resp_mat)
-
-  theta_forma_grupo <- map_dfr(formas, function(f) {
-    resp_f <- respuestas %>%
-      filter(forma == f, !is.na(correcto)) %>%
-      select(id_usuario_curso, item_id, correcto)
-    if (nrow(resp_f) == 0) return(NULL)
-
-    ids_f <- sort(unique(resp_f$id_usuario_curso))
-    m <- matrix(NA_real_, nrow = length(ids_f), ncol = length(cols_banco),
-                dimnames = list(NULL, cols_banco))
-    ridx <- match(resp_f$id_usuario_curso, ids_f)
-    cidx <- match(paste0("i", resp_f$item_id), cols_banco)
-    ok   <- !is.na(cidx)   # ítems descartados de la calibración
-    m[cbind(ridx[ok], cidx[ok])] <- resp_f$correcto[ok]
-
-    # Estudiantes que no conservan ningún ítem calibrado de esta forma.
-    filas_ok <- rowSums(!is.na(m)) > 0
-    if (!any(filas_ok)) return(NULL)
-    m     <- m[filas_ok, , drop = FALSE]
-    ids_f <- ids_f[filas_ok]
-
-    fs_f <- fscores(modelo, method = "EAP", response.pattern = m,
-                    full.scores.SE = TRUE)
-
-    tibble(
-      agno = anio_i, grado = grado_i, area = area_i,
-      id_usuario_curso = ids_f,
-      forma            = f,
-      theta_forma      = as.numeric(fs_f[, "F1"]),
-      se_theta_forma   = as.numeric(fs_f[, "SE_F1"]),
-      n_items_resp     = rowSums(!is.na(m))
-    )
-  })
-
-  if (nrow(theta_forma_grupo)) {
-    # El número de ensayo va en el nombre de la forma ("E3BAS" -> 3), tal
-    # como lo arma el inventario de la sección 1.
-    theta_forma_grupo <- theta_forma_grupo %>%
-      mutate(n_evaluacion = as.integer(str_extract(forma, "(?<=^E)\\d")))
-    cat("  theta por forma:", nrow(theta_forma_grupo), "mediciones |",
-        n_distinct(theta_forma_grupo$id_usuario_curso), "estudiantes\n")
-  }
-  theta_forma_todo[[clave_grupo]] <- theta_forma_grupo
-
   # --- 4e. Parámetros de ítem ---
   pars <- coef(modelo, IRTpars = TRUE, simplify = TRUE)$items %>%
     as.data.frame() %>% rownames_to_column("col") %>%
@@ -592,7 +551,6 @@ for (i in seq_len(nrow(grupos))) {
 
 # ---- 5. Consolidar -------------------------------------------------
 irt_theta    <- bind_rows(theta_todo)
-irt_theta_forma <- bind_rows(theta_forma_todo)
 irt_items    <- bind_rows(items_todo)
 irt_formas   <- bind_rows(formas_todo)
 irt_linking  <- bind_rows(linking_todo)
@@ -678,7 +636,6 @@ print(
 
 # ---- 7. Guardar -----------------------------------------------------
 saveRDS(irt_theta,   dir_salidas %>% file.path("irt_theta.rds"))
-saveRDS(irt_theta_forma, dir_salidas %>% file.path("irt_theta_forma.rds"))
 saveRDS(irt_items,   dir_salidas %>% file.path("irt_items.rds"))
 saveRDS(irt_formas,  dir_salidas %>% file.path("irt_formas.rds"))
 saveRDS(irt_linking, dir_salidas %>% file.path("irt_linking.rds"))
@@ -692,8 +649,6 @@ write_csv(irt_linking, dir_salidas %>% file.path("irt_linking.csv"))
 
 cat("\n\nListo. Salidas en", dir_salidas, "\n")
 cat("  - irt_theta.rds   : habilidad estimada por estudiante (insumo de 01)\n")
-cat("  - irt_theta_forma.rds : habilidad por estudiante x forma, con el\n")
-cat("                      número de ensayo (insumo del modelo de crecimiento)\n")
 cat("  - irt_items.rds   : parámetros a y b por ítem\n")
 cat("  - irt_formas.rds  : dificultad de cada forma en escala común\n")
 cat("  - irt_linking.rds : personas comunes por par de formas\n")

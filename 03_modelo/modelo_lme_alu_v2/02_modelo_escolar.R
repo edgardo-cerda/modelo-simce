@@ -1,90 +1,89 @@
 # =============================================================
-# 02_modelo_escolar.R  (v5)
+# 02_modelo_escolar.R  (v9)
 # -------------------------------------------------------------
 # Modelo del NIVEL (promedio) del colegio: regresión lineal múltiple,
 # una por combinación grado x área, validada out-of-time contra el año
 # más reciente.
 #
-# FÓRMULA v5:
+# FÓRMULA:
 #   promedio_simce ~ mean_logro_enc + nivel_hist_colegio
 #
-# FÓRMULA v4 (la anterior):
-#   promedio_simce ~ mean_logro + pred_final_logro + slope_logro +
-#                     n_evals_prom + nivel_hist_colegio
+# Dos términos, y ésa es la idea. La fórmula es mínima ACÁ porque acá hay
+# 150-220 filas por grupo; la estructura vive en 01, donde hay miles de
+# colegios y cuatro años para estimarla. Ninguno de los dos términos es una
+# variable cruda:
 #
-# Tres variables salen y una cambia:
+#   mean_logro_enc      empaqueta la calibración IRT concurrente (00), el
+#                       puntaje verdadero sobre el banco completo y el
+#                       encogimiento por confiabilidad del promedio escolar
+#                       (01, secc. 5b-bis).
+#   nivel_hist_colegio  empaqueta un modelo mixto sobre el universo
+#                       NACIONAL con prior contextual de GSE, dependencia y
+#                       ruralidad (01, secc. 6).
 #
-#  - SALE `slope_logro` (punto 1). Los ensayos no forman una progresión:
-#    tienen dificultades propias y no ordenadas. Una pendiente ajustada
-#    sobre la secuencia de ensayos mide sobre todo cuáles se aplicaron.
-#    Medido out-of-time, sacarla mueve el MAE entre -0.13 y +0.02
-#    puntos, o sea nada: el cambio es por interpretabilidad, no por
-#    precisión. Se gana además un grado de libertad, que con 150-220
-#    filas por grupo no es despreciable.
+# Cualquier término nuevo debería seguir la misma regla: estimarlo donde
+# están los datos y transferirlo como UN número.
 #
-#  - SALE `n_evals_prom` (punto 2). Entraba de forma aditiva, y no hay
-#    ninguna razón por la que el número de ensayos deba subir o bajar
-#    el SIMCE de un colegio de forma lineal. Lo que el número de
-#    ensayos sí indica es cuán PRECISO es `mean_logro`.
+# -------------------------------------------------------------
+# QUÉ SALIÓ DE LA FÓRMULA, Y POR QUÉ
+# -------------------------------------------------------------
+#  - `slope_logro` (v5). Los ensayos no forman una progresión: tienen
+#    dificultades propias y no ordenadas. Sacarla movió el MAE entre -0.13
+#    y +0.02 puntos, o sea nada.
 #
-#  - `mean_logro` pasa a `mean_logro_enc`, la versión encogida hacia el
-#    promedio del grupo según su confiabilidad (calculada en 01, secc.
-#    5b-bis). Ahí el número de ensayos entra por donde corresponde:
-#    menos ensayos -> medidas individuales más ruidosas -> más
-#    dispersión aparente entre alumnos -> mayor error del promedio ->
-#    más encogimiento -> el modelo se apoya más en el prior histórico.
+#  - `n_evals_prom` (v5). Entraba de forma aditiva y no hay razón por la
+#    que el número de ensayos deba subir o bajar el SIMCE de forma lineal.
+#    Lo que ese número sí indica es cuán PRECISO es `mean_logro`, y por ahí
+#    entra ahora: menos ensayos -> medidas individuales más ruidosas -> más
+#    dispersión aparente entre alumnos -> mayor error del promedio -> más
+#    encogimiento -> el modelo se apoya más en el prior histórico.
 #
-# EXPECTATIVA HONESTA sobre el punto 2: con 45-72 alumnos por colegio,
-# la confiabilidad del promedio escolar ya es de 0.90-0.97. El
-# encogimiento por lo tanto es suave y NO mejora el MAE (out-of-time
-# queda entre neutro y ~0.25 puntos peor). Es un cambio de corrección,
-# no de precisión. El script imprime igual la comparación contra la
-# fórmula v4 y contra `mean_logro` sin encoger, para poder auditarlo
-# en cada corrida.
+#    EXPECTATIVA HONESTA: con 45-72 alumnos por colegio la confiabilidad
+#    del promedio escolar ya es de 0.90-0.97, así que el encogimiento es
+#    suave y NO mejora el MAE (queda entre neutro y ~0.25 puntos peor). Es
+#    un cambio de corrección, no de precisión.
 #
-#  - SALE `pred_final_logro`, que es el paso que esta misma nota dejaba
-#    pendiente. Cuando el modelo de crecimiento de 01 tenía pendiente,
-#    esta variable era intercepto + pendiente*6, o sea una extrapolación:
-#    información distinta del promedio. Sacada la pendiente (punto 1),
-#    quedó siendo el intercepto solo, y el promedio por colegio de los
-#    interceptos encogidos por lme4 ES el `mean_logro` del colegio
-#    encogido. La fórmula tenía entonces DOS versiones encogidas de la
-#    misma cantidad, con dos mecanismos de encogimiento distintos: el
-#    explícito de la secc. 5b-bis de 01 y el implícito de lme4 más el
-#    recorte a [0,100].
+#  - `pred_final_logro` (v7). Sacada la pendiente, el promedio por colegio
+#    de los interceptos encogidos por lme4 ES el `mean_logro` del colegio
+#    encogido: la fórmula tenía DOS versiones de la misma cantidad con dos
+#    mecanismos de encogimiento distintos. La evidencia:
+#      - correlación con `mean_logro_enc` de 0.995 a 0.999; VIF de 73 a 360.
+#      - al regresar una sobre otra, el residuo tiene sd de 0.45-0.85
+#        puntos contra una sd propia de ~9.5 (R² 0.99-0.998). Ese residuo
+#        es el recorte a [0,100] y la diferencia entre los dos
+#        encogimientos, no señal sobre el colegio.
+#      - el MAE no decidía: 10.3 con las dos, 10.2 con una (±0.3 entre
+#        grupos, o sea ruido). Lo que decidió fue la ESTABILIDAD: dejando
+#        un año fuera del entrenamiento, con ambas variables los
+#        coeficientes hacen balancín (+31.6 y -28.4 en 2m matemática, y en
+#        tres de cuatro grupos el de logro sale negativo compensado por el
+#        otro). Con una sola queda entre 0.6 y 1.7, con signo estable y
+#        lectura directa: "un punto más de logro vale ~1 punto SIMCE".
 #
-#    La evidencia de que sobraba, medida sobre estos datos:
-#      - correlación con `mean_logro_enc`: 0.995 a 0.999; VIF de 73 a 360.
-#      - al regresar una sobre otra, el residuo de `pred_final_logro`
-#        tiene sd de 0.45-0.85 puntos de logro contra una sd propia de
-#        ~9.5 (R² 0.99-0.998). Ese residuo es el recorte a [0,100] y la
-#        diferencia entre las dos fórmulas de encogimiento, no señal
-#        sobre el colegio. Por eso se saca en vez de residualizarla.
-#      - el MAE out-of-time no decide: 10.3 con las dos, 10.2 con una
-#        sola (diferencias de ±0.3 puntos entre grupos, o sea ruido).
-#        El R² out-of-time sí mejora algo, de 0.716 a 0.737.
-#      - lo que decide es la ESTABILIDAD. Dejando fuera un año de
-#        entrenamiento por vez, con las dos variables los coeficientes
-#        hacen balancín: en 2m matemática saltan a +31.6 y -28.4, y en
-#        tres de los cuatro grupos el de logro sale con signo negativo
-#        compensado por el otro. Con una sola variable el coeficiente se
-#        queda entre 0.6 y 1.7, con signo estable y lectura directa
-#        ("un punto más de logro en el ensayo vale ~1 punto SIMCE").
+#    Este criterio —estabilidad del coeficiente antes que MAE— es el que
+#    conviene usar de aquí en adelante: con tres años y dos ventanas
+#    out-of-time, el MAE no tiene resolución para elegir entre
+#    especificaciones parecidas.
 #
-#    Se conserva `pred_final_logro` como COLUMNA en `school_features`,
-#    `ind_features` y `predicciones_colegio.csv`: sólo deja de entrar al
-#    modelo. La especificación anterior queda en `formulas_auditoria`
-#    para poder seguir viéndola en cada corrida.
+#  - CAMBIO v9: en la v8 `pred_final_logro` todavía se calculaba (12
+#    modelos mixtos en 01) y sobrevivía como columna de auditoría. Ese
+#    modelo se eliminó, así que la variable ya no existe y sale también de
+#    `formulas_auditoria`.
 #
-# Lo único que cambia es el rol que cumple dentro del pipeline:
-# ahora este modelo entrega la MEDIA de la distribución que se le
-# va a asignar a cada colegio, y 02b_modelo_dispersion.R entrega
-# su ANCHO. Las predicciones individuales de 03 se construyen
-# sobre ambos (media + dispersión), en vez de aplicarle los
-# coeficientes de colegio a cada estudiante como en la v2.
+# -------------------------------------------------------------
+# CAMBIO v9: SE ELIMINAN LOS SWITCHES
+# -------------------------------------------------------------
+# `USAR_LOGRO_ENCOGIDO`, `INCLUIR_CONTEXTO_APARTE` y `SPEC_ELEGIDA` eran
+# tres grados de libertad del investigador sobre un test de dos ventanas y
+# cuatro grupos. La fórmula de producción quedó fija. La comparación de
+# especificaciones de la sección 0b se conserva, pero como DIAGNÓSTICO: se
+# imprime y se guarda, y ya no elige nada. Si en varias corridas una
+# alternativa quedara consistentemente mejor por un margen que no sea
+# ruido (>1 punto de MAE, no 0.3), la decisión se toma a mano y por
+# escrito, no cambiando un flag.
 #
-# Por eso importa que este script quede tal cual está: es el
-# ancla de todo lo demás, y es el único componente validado
+# Rol dentro del pipeline: este modelo entrega la MEDIA de la distribución
+# de cada colegio y 02b entrega su ANCHO. Es el único componente validado
 # contra verdad observada directa (el SIMCE promedio publicado).
 # =============================================================
 
@@ -104,73 +103,28 @@ anio_test <- max(anios)
 cat("Años disponibles para entrenar/validar:", paste(anios, collapse = ", "), "\n")
 cat("Año usado como prueba (out-of-time):", anio_test, "\n\n")
 
-# `nivel_hist_colegio` ahora viene con prior contextual desde 01:
-# es la suma de la expectativa según GSE / dependencia / ruralidad y el
-# desvío propio del colegio. La fórmula no cambia, pero la variable
-# significa algo mejor, sobre todo en colegios con poca o nula historia.
+# FÓRMULA DE PRODUCCIÓN. Fija desde la v9: ya no sale de un switch.
 #
-# Se puede además incluir `contexto_nivel` como término aparte, para que
-# el modelo le dé a la expectativa contextual un peso distinto que al
-# desvío del colegio. Al probarlo out-of-time no aportó (MAE entre -0.2
-# y +0.3 puntos, peor en un grupo): con ~150-220 filas por grupo es un
-# grado de libertad que no se paga. Queda en FALSE por defecto y el
-# script imprime igual la comparación para que se pueda auditar en cada
-# corrida sobre los datos del momento.
-INCLUIR_CONTEXTO_APARTE <- FALSE
+# `nivel_hist_colegio` viene con prior contextual desde 01: es la suma de
+# la expectativa según GSE / dependencia / ruralidad y el desvío propio del
+# colegio, así que un establecimiento sin historia recibe lo que se espera
+# de los de su contexto en vez de un 0.
+formula_modelo <- promedio_simce ~ mean_logro_enc + nivel_hist_colegio
 
-# Usar el `mean_logro` encogido por confiabilidad (punto 2) o el crudo.
-# En TRUE es la especificación v5. Ponerlo en FALSE deja la fórmula v5
-# pero con el logro sin encoger, que es la comparación limpia para
-# aislar cuánto aporta el encogimiento por sí solo.
-USAR_LOGRO_ENCOGIDO <- TRUE
-
-var_logro <- if (USAR_LOGRO_ENCOGIDO) "mean_logro_enc" else "mean_logro"
-
-formula_base <- as.formula(paste(
-  "promedio_simce ~", var_logro, "+ nivel_hist_colegio"
-))
-
-# `formula_modelo` se define más abajo, a partir de SPEC_ELEGIDA (secc. 0b).
-
-# Especificaciones que se ajustan sólo para AUDITAR (no para elegir:
-# elegir mirando el año de prueba sería seleccionar sobre el test).
-# Se imprimen sus MAE junto al del modelo para poder revisar la decisión
-# con datos frescos en cada corrida.
-# OJO: la v4 completa llevaba además `slope_logro`. Desde v7 esa variable
-# vuelve a existir —el modelo de crecimiento de 01 estima pendiente sobre
-# el logro ajustado por IRT— pero se deja fuera de esta fórmula a
-# propósito: con `pred_final_logro` (que ya ES la proyección al 6º ensayo)
-# la pendiente entra dos veces. La comparación que importa la hace la
-# tabla de especificaciones de la sección 0b.
+# Especificaciones que se ajustan sólo para AUDITAR. No eligen nada:
+# elegir mirando el año de prueba sería seleccionar sobre el test.
 #
-# `v5_con_pred_final` es la especificación que estuvo vigente hasta que se
-# sacó `pred_final_logro` por colinealidad (ver el encabezado). Se deja acá
-# para poder ver en cada corrida qué costó ese cambio: si en algún momento
-# el MAE de esta fila quedara claramente por debajo del del modelo, habría
-# que volver a mirar la decisión — pero revísese también el VIF que se
-# imprime más abajo antes de concluir nada.
-#
-# `v6_sin_irt` es la MISMA fórmula pero con el nivel escolar construido
-# sobre el porcentaje de logro observado en vez del puntaje verdadero IRT
-# (01 deja las dos columnas calculadas). Es la comparación que dice qué
-# aportó la calibración del punto de vista del error de predicción, y por
-# eso conviene tenerla impresa en cada corrida y no sólo el día que se
-# hizo el cambio.
-# CAMBIO v7: sale `n_evals_prom` de la auditoría. Entraba de forma aditiva
-# —un término lineal en "cuántos ensayos rindió el colegio en promedio",
-# que nunca tuvo lectura defendible— y el número de ensayos ya entra por
-# donde corresponde: la precisión de la medida, vía el encogimiento por
-# confiabilidad de 01 (secc. 5b-bis) y, desde v7, vía la ponderación por
-# 1/se^2 del modelo de crecimiento. Con `pred_final_logro` en la fórmula,
-# mantenerlo además como regresor sería contar dos veces lo mismo.
+#   v5_sin_encoger  la misma fórmula con el logro SIN encoger. Aísla
+#                   cuánto aporta el encogimiento por sí solo.
+#   v5_con_contexto agrega `contexto_nivel` como término aparte, para que
+#                   el modelo pese distinto la expectativa contextual y el
+#                   desvío propio. Probado out-of-time no aportó (MAE entre
+#                   -0.2 y +0.3 puntos, peor en un grupo): con 150-220
+#                   filas es un grado de libertad que no se paga.
 formulas_auditoria <- list(
-  v4_sin_slope      = promedio_simce ~ mean_logro + pred_final_logro +
-                       nivel_hist_colegio,
-  v5_sin_encoger    = promedio_simce ~ mean_logro + nivel_hist_colegio,
-  v5_con_pred_final = update(formula_base, . ~ . + pred_final_logro),
-  v5_con_contexto   = update(formula_base, . ~ . + contexto_nivel),
-  v6_sin_irt        = promedio_simce ~ mean_logro_crudo_enc + nivel_hist_colegio,
-  v6_con_irt        = promedio_simce ~ mean_logro_irt_enc + nivel_hist_colegio
+  v5_sin_encoger  = promedio_simce ~ mean_logro + nivel_hist_colegio,
+  v5_con_contexto = promedio_simce ~ mean_logro_enc + nivel_hist_colegio +
+                      contexto_nivel
 )
 
 # ---- 0b. Especificaciones a comparar (NUEVO v7) ----------------------
@@ -184,30 +138,20 @@ formulas_auditoria <- list(
 # del colegio entre sus pares de ese año y el nivel absoluto queda a cargo
 # de `nivel_hist_colegio`. La deriva común del año se cancela por
 # construcción.
+#
+# CAMBIO v9: esta comparación es SÓLO DIAGNÓSTICO. Antes `SPEC_ELEGIDA`
+# tomaba de acá la fórmula de producción; ahora la fórmula está fija más
+# arriba y esta tabla se imprime para vigilar el problema de la deriva, no
+# para elegir. La tensión que deja abierta —centrar o no— es real y sigue
+# sin resolverse; resolverla pide más años, no otra corrida del mismo test.
+#
+# `pred_final_logro` y su versión centrada salieron de esta lista en la v8
+# por colinealidad, y en la v9 dejaron de existir.
 ESPECIFICACIONES <- list(
   actual = promedio_simce ~ mean_logro_enc + nivel_hist_colegio,
-  A      = promedio_simce ~ mean_logro_enc + pred_final_logro + nivel_hist_colegio,
-  B      = promedio_simce ~ pred_final_logro + nivel_hist_colegio,
   C      = promedio_simce ~ mean_logro_enc_c + nivel_hist_colegio,
-  D      = promedio_simce ~ pred_final_logro_c + nivel_hist_colegio,
   E      = promedio_simce ~ mean_logro_enc_c + nivel_hist_colegio + agno
 )
-
-# Especificación que se usa para el modelo de producción. Se elige por la
-# VENTANA A (entrena 2023, predice 2024); la ventana B (entrena 2023-24,
-# predice 2025) se deja como held-out y sólo se reporta. Elegir mirando la
-# ventana B sería seleccionar sobre el test.
-SPEC_ELEGIDA <- "actual"
-
-stopifnot("SPEC_ELEGIDA no está en ESPECIFICACIONES" =
-            SPEC_ELEGIDA %in% names(ESPECIFICACIONES))
-
-# La fórmula de producción sale de la especificación elegida. El switch de
-# contexto aparte se mantiene y se aplica sobre ella.
-formula_modelo <- ESPECIFICACIONES[[SPEC_ELEGIDA]]
-if (INCLUIR_CONTEXTO_APARTE) {
-  formula_modelo <- update(formula_modelo, . ~ . + contexto_nivel)
-}
 
 # VIF de la fórmula elegida. Se imprime en cada corrida porque el motivo por
 # el que salió `pred_final_logro` fue exactamente éste, y porque cualquier
@@ -326,8 +270,9 @@ print(
     as.data.frame()
 )
 
-cat("\nEspecificación usada para el modelo de producción:", SPEC_ELEGIDA, "\n")
-cat("(se elige por la ventana A; la B queda como held-out)\n\n")
+cat("\nLa tabla de arriba es DIAGNÓSTICO: la fórmula de producción está fija\n")
+cat("(ver el encabezado). Diferencias de MAE bajo ~0.5 puntos son empates a\n")
+cat("esta resolución; no cambiar la fórmula por ellas.\n\n")
 
 modelos    <- list()
 resultados <- list()
@@ -384,12 +329,7 @@ for (i in seq_len(nrow(grupos))) {
     mejora_vs_baseline_pct = 100 * (mae_baseline - mae_modelo) / mae_baseline,
     r2_test = r2_test,
     mae_alternativa_contexto = mae_alternativa,
-    mae_v4_sin_slope  = mae_aud[["v4_sin_slope"]],
     mae_v5_sin_encoger = mae_aud[["v5_sin_encoger"]],
-    mae_v5_con_pred_final = mae_aud[["v5_con_pred_final"]],
-    mae_sin_irt = mae_aud[["v6_sin_irt"]],
-    mae_con_irt = mae_aud[["v6_con_irt"]],
-    gana_irt_pts = mae_aud[["v6_sin_irt"]] - mae_aud[["v6_con_irt"]],
     vif_maximo = max(vif_formula(formula_modelo, train)),
     # Sesgo medio del año de prueba. Vale la pena mirarlo: si es grande y
     # del mismo signo en todos los grupos, no es ruido — es que la escala
@@ -410,13 +350,9 @@ for (i in seq_len(nrow(grupos))) {
   cat(sprintf("  Sesgo medio (predicho - observado): %+.1f puntos\n",
               resultados[[clave]]$sesgo_test))
   cat(sprintf(
-    "  Auditoría | v4 sin slope: %.1f | v5 sin encoger: %.1f | con pred_final_logro: %.1f | con contexto aparte: %.1f\n",
-    mae_aud[["v4_sin_slope"]], mae_aud[["v5_sin_encoger"]],
-    mae_aud[["v5_con_pred_final"]], mae_alternativa
+    "  Auditoría | sin encoger el logro: %.1f | con contexto aparte: %.1f\n",
+    mae_aud[["v5_sin_encoger"]], mae_alternativa
   ))
-  cat(sprintf("  IRT | sin IRT: %.1f | con IRT: %.1f | gana %+.1f puntos de MAE\n",
-              mae_aud[["v6_sin_irt"]], mae_aud[["v6_con_irt"]],
-              mae_aud[["v6_sin_irt"]] - mae_aud[["v6_con_irt"]]))
   cat(sprintf("  VIF máximo de la fórmula: %.1f%s\n",
               resultados[[clave]]$vif_maximo,
               if (resultados[[clave]]$vif_maximo > 10)

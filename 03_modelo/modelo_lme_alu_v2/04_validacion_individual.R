@@ -26,11 +26,9 @@
 #      dentro del colegio, y se mide el error contra su predicción.
 #      OJO: esto supone que el ensayo ordena perfectamente a los
 #      estudiantes, cosa que es falsa. Por lo tanto es una COTA
-#      OPTIMISTA del error individual real, no una estimación de él,
-#      y NO sirve para elegir rho (favorece mecánicamente a rho=1).
+#      OPTIMISTA del error individual real, no una estimación de él.
 #      Se reporta porque acota por abajo lo que se le puede prometer
-#      a un colegio, y porque permite chequear la cobertura de los
-#      rangos de la versión A.
+#      a un colegio.
 #
 # Todo se compara contra dos referencias:
 #   - v2 legado: aplicar los coeficientes del colegio al estudiante.
@@ -53,11 +51,6 @@ dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 
 MIN_ALU_VALID <- 15
 QS <- seq(0.05, 0.95, by = 0.05)
-# OJO: en la v5 rho multiplica una habilidad ESTIMADA (z_ensayo ya viene
-# encogido por confiabilidad), no un puntaje observado estandarizado. Los
-# valores útiles se corrieron hacia arriba: rho_v5 = rho_v4/sqrt(conf_indice),
-# y conf_indice está entre ~0.5 y ~0.85. Ver el comentario largo de 03.
-RHOS_SENSIBILIDAD <- c(0.6, 0.7, 0.8, 0.9, 1.0)
 
 pred_individual <- dir_salidas %>% file.path("predicciones_individual.rds") %>% readRDS()
 simce_alumno    <- dir_salidas %>% file.path("simce_alumno.rds") %>% readRDS()
@@ -93,10 +86,8 @@ pred_q <- pred_individual %>%
     n_pred        = n(),
     pred_colegio  = first(pred_simce_colegio),
     sd_predicha   = first(sd_simce_pred),
-    q_A           = cuantiles(pred_A),
     q_B           = cuantiles(pred_B),
     q_v2          = cuantiles(pred_v2_legado),
-    sd_A          = sd(pred_A, na.rm = TRUE),
     sd_B          = sd(pred_B, na.rm = TRUE),
     sd_v2         = sd(pred_v2_legado, na.rm = TRUE),
     .groups = "drop"
@@ -107,11 +98,9 @@ comp <- pred_q %>%
   inner_join(obs_q, by = c("grado", "area", "rbd_revisado")) %>%
   mutate(
     q_solo_media = map(pred_colegio, ~ rep(.x, length(QS))),
-    qmae_A          = map2_dbl(q_A, q_obs, ~ mean(abs(.x - .y))),
     qmae_B          = map2_dbl(q_B, q_obs, ~ mean(abs(.x - .y))),
     qmae_v2         = map2_dbl(q_v2, q_obs, ~ mean(abs(.x - .y))),
     qmae_solo_media = map2_dbl(q_solo_media, q_obs, ~ mean(abs(.x - .y))),
-    error_sd_A      = sd_A - sd_obs,
     error_sd_B      = sd_B - sd_obs,
     error_sd_v2     = sd_v2 - sd_obs,
     error_media     = pred_colegio - media_obs
@@ -148,7 +137,6 @@ resumen_dist <- comp %>%
   summarise(
     n_colegios       = n(),
     qmae_B           = mean(qmae_B),
-    qmae_A           = mean(qmae_A),
     qmae_v2_legado   = mean(qmae_v2),
     qmae_solo_media  = mean(qmae_solo_media),
     qmae_B_oraculo   = mean(qmae_B_oraculo, na.rm = TRUE),
@@ -192,65 +180,23 @@ resumen_ind <- emparejado %>%
   group_by(grado, area) %>%
   summarise(
     n_estudiantes   = n(),
-    mae_A           = mean(abs(pred_A - obs_emparejado), na.rm = TRUE),
     mae_B           = mean(abs(pred_B - obs_emparejado), na.rm = TRUE),
     mae_v2_legado   = mean(abs(pred_v2_legado - obs_emparejado), na.rm = TRUE),
     mae_solo_media  = mean(abs(pred_simce_colegio - obs_emparejado), na.rm = TRUE),
-    cobertura_rango_A = mean(obs_emparejado >= pred_A_inf & obs_emparejado <= pred_A_sup,
-                             na.rm = TRUE),
     .groups = "drop"
   )
 
 cat("ERROR INDIVIDUAL BAJO RANKING PERFECTO (cota optimista, ver encabezado):\n")
 print(resumen_ind %>% mutate(across(where(is.numeric), ~round(.x, 2))))
-cat("\ncobertura_rango_A es la fracción de estudiantes cuyo puntaje emparejado\n",
-    "cae dentro del rango p10-p90 de la versión A. Como el emparejamiento\n",
-    "supone ranking perfecto, la cobertura real será MENOR que ésta.\n\n")
+cat("\nRecordatorio: el emparejamiento supone que el ensayo ordena perfecto a\n",
+    "los estudiantes. El error individual REAL es mayor que éste.\n\n")
 
-# ---- 3. Sensibilidad al parámetro rho --------------------------------
-# rho no es estimable con estos datos: se muestra qué pasa con cada
-# métrica al moverlo. Nótese que las dos métricas empujan en
-# direcciones opuestas — el error de cuantiles mejora con rho alto
-# (más dispersión) y el error individual emparejado también, pero esa
-# segunda métrica está sesgada a favor de rho=1 por construcción. Por
-# eso rho debería fijarse por confiabilidad (ver 01), no optimizándolo
-# contra esta tabla.
-# OJO con el nombre del argumento: `emparejado` TRAE una columna llamada
-# `rho` (el rho por grupo que usó 03). Si la función se llama `function(rho)`,
-# dentro de mutate() y summarise() el enmascaramiento de datos hace ganar a la
-# COLUMNA, no al argumento: las cinco iteraciones devuelven exactamente el
-# mismo resultado —el de 03— y la tabla sale con una fila por estudiante en vez
-# de una por grupo. Por eso el argumento se llama `rho_sens` y se resta la
-# columna `rho` de los datos antes de usarla.
-sensibilidad <- map_dfr(RHOS_SENSIBILIDAD, function(rho_sens) {
-  tmp <- emparejado %>%
-    select(-any_of("rho")) %>%
-    mutate(
-      pred_rho = pred_simce_colegio + rho_sens * sd_simce_pred * z_ensayo,
-      # Misma descomposición de la varianza residual que en 03: lo que el
-      # ensayo no sabe del SIMCE, más lo que no sabemos de la posición
-      # del propio estudiante (que depende de cuántos ensayos rindió).
-      sd_res   = sd_simce_pred *
-                 sqrt(pmax((1 - rho_sens^2) +
-                           rho_sens^2 * (1 - coalesce(rel_indice, 1)), 0)),
-      inf      = pred_rho - qnorm(0.9) * sd_res,
-      sup      = pred_rho + qnorm(0.9) * sd_res
-    )
-  tmp %>%
-    group_by(grado, area) %>%
-    summarise(
-      rho = rho_sens,
-      mae_emparejado = mean(abs(pred_rho - obs_emparejado), na.rm = TRUE),
-      cobertura      = mean(obs_emparejado >= inf & obs_emparejado <= sup, na.rm = TRUE),
-      ancho_rango    = mean(sup - inf, na.rm = TRUE),
-      .groups = "drop"
-    )
-})
-
-cat("SENSIBILIDAD A rho (versión A):\n")
-print(sensibilidad %>%
-        mutate(across(where(is.numeric), ~round(.x, 2))) %>%
-        arrange(grado, area, rho))
+# SECCIÓN 3 (sensibilidad a rho): ELIMINADA EN v9 -----------------------
+# Movía rho entre 0.6 y 1.0 y reportaba MAE, cobertura y ancho del rango.
+# No podía concluir nada por construcción: sus dos métricas empujan en
+# direcciones opuestas y la del error emparejado favorece rho=1
+# mecánicamente (supone ranking perfecto). Con la versión A fuera del
+# pipeline (ver 03), rho ya no existe.
 
 # ---- 3b. Desglose por contexto ---------------------------------------
 # ¿El modelo funciona parejo entre estratos, o sólo en los que dominan
@@ -277,8 +223,7 @@ print(por_estrato %>% mutate(across(where(is.numeric), ~round(.x, 1))))
 # ---- 4. Gráficos ------------------------------------------------------
 # (i) Distribución predicha vs. observada, agrupando todos los colegios.
 dens_data <- bind_rows(
-  emparejado %>% transmute(grado, area, valor = pred_A, fuente = "Versión A (media+dispersión)"),
-  emparejado %>% transmute(grado, area, valor = pred_B, fuente = "Versión B (percentil)"),
+  emparejado %>% transmute(grado, area, valor = pred_B, fuente = "Predicción (percentil)"),
   emparejado %>% transmute(grado, area, valor = pred_v2_legado, fuente = "v2 legado"),
   obs %>% inner_join(distinct(pred_individual, grado, area, rbd_revisado),
                      by = c("grado", "area", "rbd_revisado")) %>%
@@ -299,8 +244,8 @@ ggsave(dir_salidas %>% file.path("validacion_distribucion_individual.png"),
 
 # (ii) Dispersión predicha vs. observada por colegio.
 p2 <- comp %>%
-  select(grado, area, sd_obs, `Versión B` = sd_B, `v2 legado` = sd_v2) %>%
-  pivot_longer(c(`Versión B`, `v2 legado`), names_to = "fuente", values_to = "sd_pred") %>%
+  select(grado, area, sd_obs, `Predicción` = sd_B, `v2 legado` = sd_v2) %>%
+  pivot_longer(c(`Predicción`, `v2 legado`), names_to = "fuente", values_to = "sd_pred") %>%
   ggplot(aes(sd_obs, sd_pred, color = fuente)) +
   geom_point(alpha = 0.4) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
@@ -319,9 +264,7 @@ ggsave(dir_salidas %>% file.path("validacion_dispersion_individual.png"),
 # curva ya evaluada en una grilla de 256 puntos por serie: unas pocas
 # miles de filas en total.
 dens_validacion <- dens_data %>%
-  filter(fuente %in% c("Observado", "Versión B (percentil)")) %>%
-  mutate(fuente = recode(fuente,
-                         "Versión B (percentil)" = "Predicción (versión B)")) %>%
+  filter(fuente %in% c("Observado", "Predicción (percentil)")) %>%
   filter(!is.na(valor)) %>%
   group_by(grado, area, fuente) %>%
   group_modify(~ {
@@ -432,10 +375,9 @@ write_csv(comp %>% select(-starts_with("q_")),
           dir_salidas %>% file.path("validacion_por_colegio.csv"))
 write_csv(resumen_dist, dir_salidas %>% file.path("validacion_distribucional.csv"))
 write_csv(resumen_ind,  dir_salidas %>% file.path("validacion_individual.csv"))
-write_csv(sensibilidad, dir_salidas %>% file.path("validacion_sensibilidad_rho.csv"))
 write_csv(por_estrato,  dir_salidas %>% file.path("validacion_por_estrato.csv"))
 
 cat("\nListo. Resultados en ", dir_salidas, ":\n",
     " - validacion_distribucional.csv / validacion_individual.csv\n",
-    " - validacion_sensibilidad_rho.csv / validacion_por_colegio.csv\n",
+    " - validacion_por_colegio.csv / validacion_por_estrato.csv\n",
     " - validacion_distribucion_individual.png / validacion_dispersion_individual.png\n")
