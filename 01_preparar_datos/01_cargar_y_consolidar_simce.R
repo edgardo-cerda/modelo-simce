@@ -156,14 +156,50 @@ leer_simce <- function(archivo_zip, nombre_zip) {
 }
 
 ## SIMCE por alumno: ----
-datos_simce_alu_mrun <- ruta_archivos_brutos_simce_desduplicado |> 
+datos_simce_alu_mrun <- ruta_archivos_brutos_simce_desduplicado |>
   map(leer_simce, nombre_zip = 'alu_mrun')
 
-datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |> 
+# Sexo del alumno, si la fuente lo trae. Hasta ahora el select() de más
+# abajo conservaba sólo identificadores y puntajes, así que cualquier
+# variable demográfica del archivo original se perdía en silencio.
+#
+# POR QUÉ IMPORTA: los ensayos Santillana traen `sexo` estimado a partir
+# del nombre (ver 02_cargar_y_consolidar_ensayos.R). Sin la contraparte en
+# el SIMCE no se puede medir la brecha de sexo en el resultado que se
+# quiere predecir, y por lo tanto no se puede saber si el sexo aporta algo
+# POR SOBRE lo que el ensayo ya mide. Con esta columna esa pregunta pasa a
+# ser contestable con datos en vez de con un supuesto.
+#
+# El nombre exacto cambia entre versiones del archivo de la Agencia, así
+# que se prueban varios candidatos y se avisa fuerte si no aparece
+# ninguno: un any_of() que no encuentra nada no falla, y sin este aviso el
+# problema volvería a pasar inadvertido.
+VARS_SEXO_CANDIDATAS <- c('sexo', 'gen_alu')
+
+sexo_detectado <- datos_simce_alu_mrun |>
+  map(~ intersect(VARS_SEXO_CANDIDATAS, names(.x))) |>
+  unlist() |> unique()
+
+if (length(sexo_detectado) == 0) {
+  candidatas_parecidas <- datos_simce_alu_mrun |>
+    map(~ grep('gen|sex', names(.x), ignore.case = TRUE, value = TRUE)) |>
+    unlist() |> unique()
+  warning('No se encontró variable de sexo en los archivos alu_mrun. ',
+          'Columnas con nombre parecido: ',
+          if (length(candidatas_parecidas)) paste(candidatas_parecidas, collapse = ', ')
+          else '(ninguna)',
+          '. Si alguna corresponde, agregarla a VARS_SEXO_CANDIDATAS.')
+} else {
+  message('Variable(s) de sexo detectada(s) en el SIMCE por alumno: ',
+          paste(sexo_detectado, collapse = ', '))
+}
+
+datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |>
   map(~{
     # Homologar nombres y tipos de datos:
-    data_vars_seleccionadas <- .x |> 
+    data_vars_seleccionadas <- .x |>
       select(agno, grado, idalumno, mrun, rbd, dvrbd, cod_curso,
+             any_of(VARS_SEXO_CANDIDATAS),
              starts_with(c('ptje_mate', 'ptje_lect', 'eem_mate', 'eem_lect', 'eda_mate', 'eda_lect')))
     names(data_vars_seleccionadas) <- str_remove_all(names(data_vars_seleccionadas),
                                                      '(4b|8b|2m|6b)_alu')
@@ -172,7 +208,9 @@ datos_simce_alu_mrun_consolidado <- datos_simce_alu_mrun |>
     return(data_homologada)
   }
   ) |> 
-  list_rbind()
+  list_rbind() |> 
+  mutate(sexo = ifelse(!is.na(gen_alu), gen_alu, sexo),
+         sexo = ifelse(sexo %in% 1:2, sexo, NA))
 
 # Chequeo de sanidad: alerta (no detiene la ejecución) si aparecen puntajes
 # fuera de rango plausible, para detectar a tiempo problemas de parseo futuros:
@@ -224,6 +262,5 @@ datos_simce_rbd_consolidado_long |>
 
 # Limpiar ambiente
 gc()
-rm(list=ls())
 
 

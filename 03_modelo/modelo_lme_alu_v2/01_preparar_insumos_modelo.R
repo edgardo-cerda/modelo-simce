@@ -1,5 +1,32 @@
 # =============================================================
-# 01_preparar_insumos_modelo.R  (v9)
+# 01_preparar_insumos_modelo.R  (v10)
+# -------------------------------------------------------------
+# CAMBIO v10 — SEXO DEL ALUMNO, SÓLO PARA VALIDAR.
+#
+# Entran dos columnas nuevas y ninguna toca la predicción:
+#
+#   - `sexo` en `ind_features`: estimado del nombre con el registro de
+#     nombres de nacimiento (paquete `guaguas`), en
+#     02_cargar_y_consolidar_ensayos.R. Cobertura 99.0%.
+#   - `sexo` en `simce_alumno`: administrativo, del archivo de la Agencia.
+#     Venía en la fuente desde siempre pero el consolidado lo descartaba;
+#     01_cargar_y_consolidar_simce.R ahora lo conserva y homologa (en 2022
+#     la columna se llama `gen_alu`, desde 2023 `sexo`).
+#
+# PARA QUÉ. Es el primer atributo individual presente en las DOS fuentes a
+# la vez, así que permite validar la ASIGNACIÓN dentro del colegio, que
+# hasta ahora era un punto ciego: el error de cuantiles no cambia si se
+# reordena a los estudiantes entre sí. La sección 3c de 04 hace esa
+# validación.
+#
+# POR QUÉ NO ENTRA COMO PREDICTOR. Se midió: la brecha de sexo atraviesa
+# el pipeline intacta dentro de theta (en 4b matemática, 0.297 sd en
+# theta -> 0.299 en el índice -> 0.287 en la predicción final), o sea que
+# el ensayo YA la lleva. Lo que el modelo no captura es la diferencia
+# entre la brecha del ensayo y la del SIMCE, y corregirla mejora el error
+# de cuantiles entre 0.00 y 0.21 puntos sobre errores de 11 a 18. Ver el
+# encabezado de 04 para el detalle.
+#
 # -------------------------------------------------------------
 # CAMBIOS v9 — SIMPLIFICACIÓN. Seis cambios, cuatro de ellos acá.
 #
@@ -381,11 +408,28 @@ stopifnot(
     !any(is.na(irt_theta$logro_irt))
 )
 
-## SIMCE POR ALUMNO (NUEVO) ----
+## SIMCE POR ALUMNO ----
 ruta_alu <- ruta_data_intermedia %>%
   file.path('simce', 'consolidado_datos_simce_alu.parquet')
 
 simce_alu0 <- read_parquet(ruta_alu)
+
+## SEXO DEL ALUMNO EN EL ENSAYO (v10) ----
+# Estimado a partir del nombre en 02_cargar_y_consolidar_ensayos.R, con el
+# registro de nombres de nacimiento (paquete `guaguas`): se asigna un sexo
+# cuando más del 75% de las personas con ese nombre lo tienen. Cobertura
+# 99.0-99.1% de los estudiantes del ensayo, con un balance de 49.8/49.2.
+#
+# NO entra en la predicción. Se usa sólo para la validación estratificada
+# de 04, que es lo que esta variable habilita de verdad: comprobar si la
+# distribución que el modelo predice para cada sexo reproduce la observada.
+# La justificación de por qué no entra como predictor está en el
+# encabezado de 04; el resumen es que la brecha ya viaja dentro del theta.
+sexo_ensayo <- ensayos_santillana0 %>%
+  distinct(id_usuario_curso, sexo) %>%
+  filter(sexo %in% c("hombre", "mujer"))
+
+cat("\nSexo estimado disponible para", nrow(sexo_ensayo), "estudiantes del ensayo\n")
 
 # ---- 2. Limpieza de ensayos -----------------------------------------
 ensayos_limpio <- ensayos %>%
@@ -438,13 +482,21 @@ ensayos_dedup <- ensayos_limpio %>%
 # alumnos matriculados que no rindieron o quedaron excluidos).
 simce_alumno <- simce_alu0 %>%
   filter(grado %in% GRADOS_MODELO) %>%
-  mutate(agno = as.numeric(agno), 
-         rbd_revisado = as.numeric(rbd)) %>% 
+  mutate(agno = as.numeric(agno),
+         rbd_revisado = as.numeric(rbd)) %>%
   pivot_longer(cols = c(ptje_mate, ptje_lect, eem_mate, eem_lect, eda_mate, eda_lect),
                names_sep = '_',
                names_to = c('.value', 'area')
                ) %>%
-  mutate(area = ifelse(area == 'mate', 'matematica', 'lenguaje')) %>%
+  mutate(area = ifelse(area == 'mate', 'matematica', 'lenguaje'),
+         # Sexo administrativo (v10). Viene 1/2 desde el archivo de la
+         # Agencia —en 2022 la columna se llama `gen_alu` y desde 2023
+         # `sexo`; 01_cargar_y_consolidar_simce.R las homologa. Se pasa a
+         # etiqueta para que calce con el sexo estimado del ensayo y para
+         # que ningún resumen lo promedie como si fuera un número.
+         sexo = case_when(sexo == 1 ~ "hombre",
+                          sexo == 2 ~ "mujer",
+                          TRUE      ~ NA_character_)) %>%
   # Se descartan efectivamente los puntajes ausentes (~20% de las filas).
   # No es cosmético: `simce_dist` contaría esos alumnos en `n_alu_simce`,
   # y las secciones que llaman a density() o quantile() sin na.rm (6c, 8b)
@@ -736,7 +788,17 @@ ind_features <- resumen_simple %>%
       select(agno, grado, area, rbd_revisado, id_usuario_curso,
              indice_ensayo, rel_indice, z_bruto),
     by = c("agno", "grado", "area", "rbd_revisado", "id_usuario_curso")
-  )
+  ) %>%
+  # Sexo estimado (v10). Viaja con el estudiante para que 04 pueda validar
+  # por sexo. Insisto en que NO entra en ninguna fórmula: se verificó que
+  # la brecha de sexo atraviesa el pipeline intacta dentro de theta
+  # (0.297 -> 0.299 -> 0.287 sd en 4b matemática, de theta al índice y a la
+  # predicción final), así que agregarla como predictor sería contarla dos
+  # veces sobre la parte que el ensayo ya mide.
+  left_join(sexo_ensayo, by = "id_usuario_curso")
+
+cat("\nCobertura del sexo estimado en ind_features:",
+    sprintf("%.1f%%", 100 * mean(!is.na(ind_features$sexo))), "\n")
 
 # Los estudiantes sin theta no tienen índice: quedan fuera del ordenamiento
 # interno pero se conservan en la base (su colegio los necesita para el

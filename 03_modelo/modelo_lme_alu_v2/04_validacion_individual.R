@@ -39,6 +39,79 @@
 # La validación es out-of-time: los modelos de 02 y 02b se entrenaron
 # excluyendo este año, y la forma de la distribución y la dispersión
 # histórica se calcularon en 01 con ventana expansiva.
+#
+# -------------------------------------------------------------
+# NUEVO v10: VALIDACIÓN POR SEXO (sección 3c)
+# -------------------------------------------------------------
+# Las dos métricas de arriba tienen un punto ciego: son insensibles a la
+# ASIGNACIÓN. En la versión por percentil, el conjunto de puntajes
+# predichos de un colegio queda fijado por (media, ancho, forma), así que
+# reordenar a los estudiantes entre sí no cambia ni la distribución
+# predicha ni el error de cuantiles. Hasta la v9 ninguna métrica del
+# proyecto podía decir si el modelo repartía bien DENTRO del colegio.
+#
+# El sexo rompe ese punto ciego. Es el primer atributo individual presente
+# en las dos fuentes a la vez: estimado del nombre en el ensayo,
+# administrativo en el SIMCE. Partiendo cada colegio en dos grupos se
+# puede preguntar si la distribución predicha para cada uno reproduce la
+# observada — una prueba de la asignación, y de paso una revisión de
+# equidad de un producto que entrega puntajes por estudiante.
+#
+# QUÉ ENCONTRÓ, que es la razón de dejarla corriendo en cada ronda: el
+# modelo SUBESTIMA LA VENTAJA MASCULINA EN MATEMÁTICA. La brecha observada
+# entre hombres y mujeres es de 13.3 puntos en 2m y 16.4 en 4b, y el
+# modelo predice 5.7 y 11.1: faltan 7.7 y 5.2 puntos. En lenguaje la
+# brecha se reproduce bien (falta -0.7 en 2m, -2.5 en 4b).
+#
+# Y POR QUÉ EL SEXO IGUAL NO ENTRA COMO PREDICTOR: corregir esa brecha
+# —desplazando cada sexo media brecha faltante, que es la cota superior de
+# lo que un ajuste podría lograr— mejora el error de cuantiles en 0.00,
+# 0.21, 0.03 y 0.10 puntos, sobre errores de 11 a 18. Es una a dos
+# centésimas del error. La brecha ya viaja dentro del theta (se verificó
+# que atraviesa el pipeline intacta), así que agregar el sexo sería
+# contarla dos veces sobre la parte que el ensayo ya mide, a cambio de
+# nada medible.
+#
+# La sección recalcula ambas cosas en cada corrida: si en algún momento la
+# ganancia dejara de ser de décimas, la decisión se puede revisar con
+# datos frescos en vez de con este comentario.
+#
+# -------------------------------------------------------------
+# TAMBIÉN SE PROBÓ: PERCENTIL CONDICIONAL AL SEXO (y por qué falló)
+# -------------------------------------------------------------
+# El desplazamiento de arriba corrige sólo la media. La alternativa más
+# general es calcular la posición del estudiante DENTRO DE SU SEXO y
+# mapearla a una distribución del colegio desplazada y reescalada para ese
+# sexo — así se corrigen también dispersión y forma, no sólo el nivel. Es
+# una propuesta mejor y hubo que medirla aparte.
+#
+# Estimando los parámetros y evaluándolos EN EL MISMO AÑO parecía servir:
+# ganaba 0.18, 0.44, 0.23 y 0.38 puntos, en los cuatro grupos. Dos
+# controles la desarmaron:
+#
+#   1. OUT-OF-TIME. Estimando el desplazamiento y la escala con los años
+#      anteriores y aplicándolos al año de prueba, la ganancia cae a 0.08,
+#      0.73, 0.06 y -0.54. Es NEGATIVA justo en 4b matemática, que es donde
+#      la brecha bruta era mayor: el parámetro no transfiere entre años.
+#      Y con razón, porque la brecha faltante se mueve harto de un año a
+#      otro (-2.3, +1.7, +3.1 en 4b matemática).
+#
+#   2. PLACEBO. El mismo procedimiento sobre un grupo ALEATORIO en vez del
+#      sexo gana MÁS: entre 0.97 y 2.14 puntos en cinco sorteos, siempre
+#      por encima del sexo en los cuatro grupos.
+#
+# El placebo revela el mecanismo: re-rankear dentro de CUALQUIER subgrupo
+# hace que la sub-distribución predicha vuelva a cubrir todo el rango, igual
+# que la observada. Comparar un subconjunto del rango predicho contra el
+# rango completo del observado penaliza a la regla agrupada por
+# construcción. O sea que la ganancia aparente era del método —partir en dos
+# y re-rankear— y no de la variable. El sexo queda por debajo del azar
+# porque además arrastra un parámetro estimado que no transfiere.
+#
+# MORALEJA, que vale más allá del sexo: cualquier regla de asignación que
+# re-rankee dentro de subgrupos tiene que compararse contra un placebo
+# aleatorio antes de creerle. La métrica de cuantiles por subgrupo la
+# favorece mecánicamente.
 # =============================================================
 
 library(tidyverse)
@@ -220,6 +293,118 @@ por_estrato <- comp %>%
 cat("\nERROR POR ESTRATO GSE (ojo con los estratos de pocos colegios):\n")
 print(por_estrato %>% mutate(across(where(is.numeric), ~round(.x, 1))))
 
+# ---- 3c. VALIDACIÓN POR SEXO (NUEVO v10) -----------------------------
+# Lo que esta sección habilita, y por qué es distinta de todo lo anterior.
+#
+# La validación de la sección 1 compara la distribución PREDICHA de un
+# colegio contra la OBSERVADA. Es insensible a quién es quién: en la
+# versión por percentil el conjunto de puntajes predichos de un colegio
+# queda fijado por (media, ancho, forma), así que reordenar a los
+# estudiantes entre sí no cambia esa distribución ni una décima. Dicho de
+# otro modo: hasta ahora NINGUNA métrica del proyecto podía decir si el
+# modelo estaba asignando bien los puntajes DENTRO del colegio.
+#
+# El sexo cambia eso. Es el primer atributo individual presente en las dos
+# fuentes a la vez —estimado del nombre en el ensayo (01), administrativo
+# en el SIMCE (01_cargar_y_consolidar_simce.R)— así que permite partir cada
+# colegio en dos grupos y preguntar si la distribución predicha para cada
+# uno reproduce la observada. Es una prueba de la ASIGNACIÓN, no sólo del
+# agregado, y de paso una revisión de equidad de un producto que entrega
+# puntajes por estudiante.
+#
+# Los dos sexos NO están enlazados alumno a alumno (siguen siendo
+# poblaciones distintas: quienes rinden el ensayo no son exactamente
+# quienes rinden el SIMCE), así que esto compara distribuciones por grupo,
+# no personas.
+#
+# CÓMO LEER LA SALIDA:
+#   sesgo_H, sesgo_M   predicho menos observado en cada grupo. Arrastran el
+#                      sesgo general de deriva entre años, así que no se
+#                      leen solos.
+#   brecha_predicha    (media H - media M) según el modelo
+#   brecha_observada   (media H - media M) en el SIMCE real
+#   falta              observada menos predicha. ES EL NÚMERO QUE IMPORTA:
+#                      cuánto de la brecha real NO llega a la predicción.
+#                      Positivo = el modelo subestima la ventaja masculina.
+MIN_POR_SEXO <- 8   # mínimo de alumnos de cada sexo, en cada lado
+
+if (!"sexo" %in% names(pred_individual) || !"sexo" %in% names(obs)) {
+
+  warning("Falta la columna `sexo` en pred_individual o en simce_alumno: ",
+          "se omite la validación por sexo. Hay que volver a correr 01 (v10).")
+  val_sexo <- NULL
+
+} else {
+
+  obs_sexo <- obs %>%
+    filter(!is.na(sexo)) %>%
+    group_by(grado, area, rbd_revisado, sexo) %>%
+    filter(n() >= MIN_POR_SEXO) %>%
+    summarise(n_obs = n(), media_obs = mean(ptje), q_obs = cuantiles(ptje),
+              .groups = "drop")
+
+  pred_sexo <- pred_individual %>%
+    filter(!is.na(sexo)) %>%
+    group_by(grado, area, rbd_revisado, sexo) %>%
+    filter(n() >= MIN_POR_SEXO) %>%
+    summarise(n_pred = n(), media_pred = mean(pred_B), q_pred = cuantiles(pred_B),
+              .groups = "drop")
+
+  # Sólo colegios donde AMBOS sexos superan el mínimo en ambos lados: si
+  # uno de los grupos entra sólo por un lado, la brecha no es comparable.
+  val_sexo <- inner_join(pred_sexo, obs_sexo,
+                         by = c("grado", "area", "rbd_revisado", "sexo")) %>%
+    group_by(grado, area, rbd_revisado) %>%
+    filter(n_distinct(sexo) == 2) %>%
+    ungroup() %>%
+    mutate(qmae = map2_dbl(q_pred, q_obs, ~ mean(abs(.x - .y))),
+           sesgo = media_pred - media_obs)
+
+  resumen_sexo <- val_sexo %>%
+    group_by(grado, area, sexo) %>%
+    summarise(n_colegios = n(), qmae = mean(qmae),
+              media_pred = mean(media_pred), media_obs = mean(media_obs),
+              .groups = "drop") %>%
+    pivot_wider(names_from = sexo,
+                values_from = c(n_colegios, qmae, media_pred, media_obs)) %>%
+    transmute(
+      grado, area, n_colegios = n_colegios_hombre,
+      qmae_H = qmae_hombre, qmae_M = qmae_mujer,
+      brecha_predicha = media_pred_hombre - media_pred_mujer,
+      brecha_observada = media_obs_hombre - media_obs_mujer,
+      falta = brecha_observada - brecha_predicha
+    )
+
+  cat("\n\nCALIBRACIÓN POR SEXO (puntos SIMCE; el año de validación):\n")
+  print(resumen_sexo %>% mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+          as.data.frame())
+  cat("\n`falta` positivo = el modelo subestima la ventaja masculina en ese grupo.\n")
+
+  # --- ¿Cuánto se ganaría corrigiendo? ---------------------------------
+  # Se desplaza cada sexo por media brecha faltante —lo máximo que podría
+  # aportar un ajuste por sexo— y se recalcula el error de cuantiles. Es
+  # una COTA SUPERIOR de la ganancia: supone que la corrección es exacta y
+  # que el sexo estimado no tiene error. Se reporta en cada corrida porque
+  # es el número que decide si vale la pena meter el sexo al modelo, y
+  # conviene que la decisión se pueda revisar con datos frescos.
+  ganancia_sexo <- val_sexo %>%
+    left_join(resumen_sexo %>% select(grado, area, falta), by = c("grado", "area")) %>%
+    mutate(
+      desplazamiento = if_else(sexo == "hombre", falta / 2, -falta / 2),
+      qmae_ajustado = map2_dbl(map2(q_pred, desplazamiento, ~ .x + .y), q_obs,
+                               ~ mean(abs(.x - .y)))
+    ) %>%
+    group_by(grado, area) %>%
+    summarise(qmae_actual = mean(qmae), qmae_con_ajuste = mean(qmae_ajustado),
+              ganancia = mean(qmae) - mean(qmae_ajustado), .groups = "drop")
+
+  cat("\nCOTA SUPERIOR de lo que aportaría ajustar por sexo:\n")
+  print(ganancia_sexo %>% mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+          as.data.frame())
+  cat("\nSi la ganancia es de décimas sobre un error de dos dígitos, el sexo\n",
+      "no se justifica como predictor: la brecha ya viaja dentro del theta.\n")
+}
+
 # ---- 4. Gráficos ------------------------------------------------------
 # (i) Distribución predicha vs. observada, agrupando todos los colegios.
 dens_data <- bind_rows(
@@ -376,6 +561,11 @@ write_csv(comp %>% select(-starts_with("q_")),
 write_csv(resumen_dist, dir_salidas %>% file.path("validacion_distribucional.csv"))
 write_csv(resumen_ind,  dir_salidas %>% file.path("validacion_individual.csv"))
 write_csv(por_estrato,  dir_salidas %>% file.path("validacion_por_estrato.csv"))
+if (!is.null(val_sexo)) {
+  saveRDS(resumen_sexo,   dir_salidas %>% file.path("validacion_sexo.rds"))
+  write_csv(resumen_sexo, dir_salidas %>% file.path("validacion_sexo.csv"))
+  write_csv(ganancia_sexo, dir_salidas %>% file.path("validacion_sexo_ganancia.csv"))
+}
 
 cat("\nListo. Resultados en ", dir_salidas, ":\n",
     " - validacion_distribucional.csv / validacion_individual.csv\n",
