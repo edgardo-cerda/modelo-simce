@@ -274,7 +274,7 @@ cat("\nLa tabla de arriba es DIAGNÓSTICO: la fórmula de producción está fija
 cat("(ver el encabezado). Diferencias de MAE bajo ~0.5 puntos son empates a\n")
 cat("esta resolución; no cambiar la fórmula por ellas.\n\n")
 
-modelos    <- list()
+modelos    <- list()   # ajustados SIN el año de prueba: sirven para medir
 resultados <- list()
 
 for (i in seq_len(nrow(grupos))) {
@@ -393,6 +393,64 @@ if (nrow(tabla_resultados) > 0) {
   }
 }
 
+# ---- MODELOS DE PRODUCCIÓN (NUEVO v11) --------------------------------
+# Los `modelos` de arriba dejan fuera el último año a propósito: sin eso
+# no habría con qué medir. Pero para predecir una ronda NUEVA —2026, que
+# todavía no tiene SIMCE— desperdiciar el año más reciente no tiene
+# sentido: es el más informativo y no hay nada que contaminar, porque el
+# año objetivo no está en los datos de entrenamiento de ninguna manera.
+#
+# Se ajustan entonces los mismos modelos sobre TODOS los años cerrados
+# (los que tienen SIMCE observado) y se guardan aparte. La regla que
+# aplica 03 para elegir entre unos y otros es una sola:
+#
+#     usar el modelo que NO vio el año que se está prediciendo
+#
+# Si el año objetivo es un año cerrado —porque todavía no llegaron los
+# ensayos de la ronda nueva— corresponde el modelo de validación. Si es un
+# año sin SIMCE, corresponde el de producción. En los dos casos la
+# predicción es fuera de muestra, que es lo que hace comparables las
+# métricas con lo que se le promete al colegio.
+#
+# NO se reportan métricas de estos modelos: entrenaron con todo, así que
+# cualquier error medido sobre esos mismos datos sería optimista. La
+# precisión que vale sigue siendo la de la tabla de validación de arriba.
+modelos_produccion <- list()
+
+for (i in seq_len(nrow(grupos))) {
+
+  g <- grupos$grado[i]; a <- grupos$area[i]
+  clave <- paste(g, a, sep = "_")
+
+  datos_grupo <- school_model_data %>%
+    filter(grado == g, area == a, !is.na(promedio_simce))
+
+  if (nrow(datos_grupo) < 20) {
+    cat("Grupo", clave, ": muy pocos datos para el modelo de producción, se omite.\n")
+    next
+  }
+
+  modelos_produccion[[clave]] <- lm(formula_modelo, data = datos_grupo)
+}
+
+cat("\nModelos de producción ajustados sobre los años cerrados",
+    paste(anios, collapse = ", "), ":", length(modelos_produccion), "grupos\n")
+cat("Coeficientes (producción vs. validación):\n")
+print(
+  map_dfr(names(modelos_produccion), function(clave) {
+    cp <- coef(modelos_produccion[[clave]])
+    cv <- if (clave %in% names(modelos)) coef(modelos[[clave]]) else setNames(rep(NA, length(cp)), names(cp))
+    tibble(grupo = clave, termino = names(cp),
+           produccion = round(unname(cp), 3),
+           validacion = round(unname(cv[names(cp)]), 3))
+  }) %>%
+    filter(termino != "(Intercept)") %>%
+    as.data.frame()
+)
+cat("\n(Si un coeficiente cambia mucho al agregar el último año, conviene\n",
+    " mirarlo: significa que ese año aporta información distinta de la de\n",
+    " los anteriores, que es justo el síntoma de la deriva entre años.)\n")
+
 # ---- Gráfico de diagnóstico: observado vs. predicho en el año de prueba ----
 # Se guardan también el rbd y el contexto de cada colegio: 05 los usa
 # para los tooltips del gráfico interactivo de la presentación (poder
@@ -438,6 +496,12 @@ print(
 
 # ---- Guardar modelos y métricas ----------------------------------------
 saveRDS(modelos, dir_salidas %>% file.path("modelos_escolares.rds"))
+saveRDS(modelos_produccion,
+        dir_salidas %>% file.path("modelos_escolares_produccion.rds"))
+# Años con SIMCE observado. 03 lo usa para saber si el año que va a
+# predecir es uno cerrado (y entonces corresponde el modelo de validación)
+# o una ronda nueva (y corresponde el de producción).
+saveRDS(anios, dir_salidas %>% file.path("anios_cerrados.rds"))
 saveRDS(diag_plot_data, dir_salidas %>% file.path("diag_nivel.rds"))  # lo usa 05
 saveRDS(anio_test, dir_salidas %>% file.path("anio_test.rds"))  # lo reusa 04
 write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv"))

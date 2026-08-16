@@ -55,6 +55,36 @@
 # La predicción no puede validarse estudiante por estudiante, pero SÍ a
 # nivel de distribución contra los puntajes individuales reales: ver
 # 04_validacion_individual.R.
+#
+# -------------------------------------------------------------
+# CÓMO SE CORRE UNA RONDA NUEVA (v11)
+# -------------------------------------------------------------
+# El pipeline es el mismo de siempre —00, 01, 02, 02b, 03, 04— y se adapta
+# solo. No hay modo, flag ni parámetro que cambiar:
+#
+#   1. Cargar los ensayos del año nuevo y correr 00 y 01. El año nuevo
+#      aparece en `school_features` pero NO en `school_model_data`, porque
+#      todavía no tiene SIMCE con que cruzarse.
+#   2. 02 y 02b ajustan DOS juegos de modelos: los de validación (que
+#      excluyen el último año cerrado, y de los que salen las métricas) y
+#      los de producción (que usan todos los años cerrados).
+#   3. Este script detecta si el año objetivo tiene SIMCE y elige el juego
+#      que no lo vio. Con una ronda nueva, ésos son los de producción.
+#   4. 04 no encuentra SIMCE del año nuevo, avisa y termina bien. Las
+#      métricas siguen siendo las del último año cerrado.
+#
+# UN SOLO ENSAYO EN EL AÑO NUEVO: probado de punta a punta y funciona. La
+# calibración de 00 admite una forma única (no hay nada que enlazar, así
+# que el chequeo de conectividad pasa trivialmente) y el índice individual
+# tolera k = 1 con confiabilidad ~0.85-0.93, porque `se_theta` sale de los
+# ítems efectivamente rendidos y una forma de 35-45 ítems mide razonable.
+#
+# LO QUE SÍ HAY QUE MIRAR en ese caso: el aviso de comparabilidad del banco
+# que imprime 01. `mean_logro` es el porcentaje del banco de ítems del año,
+# y con una forma ese banco es de ~40 ítems en vez de ~240. Si el nivel
+# implícito se corre respecto de los años anteriores, el modelo —que usa
+# `mean_logro_enc` EN NIVELES— lo lee como cambio real de los colegios. Es
+# la misma deriva entre años que 02 reporta como pendiente, amplificada.
 # =============================================================
 
 library(tidyverse)
@@ -73,15 +103,48 @@ dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 # ---- 1. Insumos ---------------------------------------------------
 ind_features    <- dir_salidas %>% file.path("ind_features.rds") %>% readRDS()
 school_features <- dir_salidas %>% file.path("school_features.rds") %>% readRDS()
-modelos         <- dir_salidas %>% file.path("modelos_escolares.rds") %>% readRDS()
-modelos_sd      <- dir_salidas %>% file.path("modelos_dispersion.rds") %>% readRDS()
-limites_sd      <- dir_salidas %>% file.path("limites_dispersion.rds") %>% readRDS()
 forma_z         <- dir_salidas %>% file.path("forma_z.rds") %>% readRDS()
 cortes_tercil   <- dir_salidas %>% file.path("cortes_tercil.rds") %>% readRDS()
 limites_simce   <- dir_salidas %>% file.path("limites_simce.rds") %>% readRDS()
+anios_cerrados  <- dir_salidas %>% file.path("anios_cerrados.rds") %>% readRDS()
 
 anio_prediccion <- max(school_features$agno)
-cat("Prediciendo ronda:", anio_prediccion, "\n\n")
+
+# ---- 1b. Qué juego de modelos corresponde (NUEVO v11) ---------------
+# Una sola regla: SE USA EL MODELO QUE NO VIO EL AÑO QUE SE PREDICE.
+#
+#   - Año objetivo SIN SIMCE (una ronda nueva, p.ej. 2026): ningún modelo
+#     pudo verlo, así que corresponde el de PRODUCCIÓN, ajustado con todos
+#     los años cerrados. Desperdiciar el año más reciente ahí no tendría
+#     sentido: es el más informativo y no hay nada que contaminar.
+#
+#   - Año objetivo CERRADO (todavía no llegan los ensayos de la ronda
+#     nueva): el de producción lo tuvo en su entrenamiento, así que
+#     predecirlo con él sería dentro de muestra. Corresponde el de
+#     VALIDACIÓN, que lo dejó fuera.
+#
+# En los dos casos la predicción es fuera de muestra, que es lo que hace
+# que las métricas reportadas describan de verdad lo que se le entrega al
+# colegio. No hay switch: lo decide qué años traen SIMCE.
+es_ronda_nueva <- !(anio_prediccion %in% anios_cerrados)
+
+if (es_ronda_nueva) {
+  modelos    <- dir_salidas %>% file.path("modelos_escolares_produccion.rds") %>% readRDS()
+  modelos_sd <- dir_salidas %>% file.path("modelos_dispersion_produccion.rds") %>% readRDS()
+  limites_sd <- dir_salidas %>% file.path("limites_dispersion_produccion.rds") %>% readRDS()
+  modo <- "PRODUCCIÓN"
+  detalle <- paste("entrenados con", paste(anios_cerrados, collapse = ", "))
+} else {
+  modelos    <- dir_salidas %>% file.path("modelos_escolares.rds") %>% readRDS()
+  modelos_sd <- dir_salidas %>% file.path("modelos_dispersion.rds") %>% readRDS()
+  limites_sd <- dir_salidas %>% file.path("limites_dispersion.rds") %>% readRDS()
+  modo <- "VALIDACIÓN"
+  detalle <- paste("entrenados excluyendo", anio_prediccion)
+}
+
+cat("Prediciendo ronda:", anio_prediccion, "\n")
+cat("Años con SIMCE observado:", paste(anios_cerrados, collapse = ", "), "\n")
+cat("Modelos usados:", modo, "(", detalle, ")\n\n")
 
 # ---- 2. Predicción a nivel de colegio: media y ancho ---------------
 # mu_hat viene del modelo de 02; sd_hat del modelo de 02b. Si para un

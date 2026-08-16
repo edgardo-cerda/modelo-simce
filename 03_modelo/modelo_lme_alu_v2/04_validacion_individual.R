@@ -60,9 +60,33 @@ anio_val <- max(pred_individual$agno)
 cat("Validando predicciones individuales del año:", anio_val, "\n")
 
 obs <- simce_alumno %>% filter(agno == anio_val)
+
+# CAMBIO v11: predecir una ronda nueva (2026) es el caso NORMAL en
+# producción, y ahí no hay SIMCE contra qué validar todavía. Antes esto
+# abortaba con error y rompía la corrida completa del pipeline. Ahora
+# termina limpio y explica dónde están las métricas que sí valen.
+#
+# `quit(status = 0)` sólo se usa fuera de una sesión interactiva, que es
+# como corre el pipeline: así el script termina bien y la cadena sigue. En
+# una sesión interactiva no se puede cerrar R sin más, así que ahí se
+# levanta el error después de haber explicado el motivo.
 if (nrow(obs) == 0) {
-  stop("No hay SIMCE individual observado para ", anio_val,
-       ": la validación sólo corre sobre un año ya cerrado.")
+  cat("\n-------------------------------------------------------------\n")
+  cat("No hay SIMCE observado para", anio_val, ": no se puede validar\n")
+  cat("esta ronda, y no es un problema — es lo esperable cuando se está\n")
+  cat("prediciendo un año que todavía no rinde la prueba.\n\n")
+  cat("Las métricas de precisión del modelo salen del último año CERRADO\n")
+  cat("y ya están calculadas:\n")
+  cat("   metricas_validacion.csv    (nivel, 02)\n")
+  cat("   metricas_dispersion.csv    (dispersión, 02b)\n")
+  cat("   validacion_*.csv           (individual, de la última corrida\n")
+  cat("                               sobre un año cerrado)\n\n")
+  cat("Para volver a validar de punta a punta hay que correr el pipeline\n")
+  cat("sin los ensayos de la ronda nueva, de modo que el año objetivo\n")
+  cat("vuelva a ser uno con SIMCE observado.\n")
+  cat("-------------------------------------------------------------\n")
+  if (!interactive()) quit(save = "no", status = 0)
+  stop("Sin SIMCE observado para ", anio_val, ": ver el mensaje de arriba.")
 }
 
 # ---- 1. Cuantiles observados y predichos por colegio ----------------

@@ -381,6 +381,79 @@ stopifnot(
     !any(is.na(irt_theta$logro_irt))
 )
 
+# --- COMPARABILIDAD DEL BANCO ENTRE AÑOS (NUEVO v11) --------------------
+# El riesgo más serio al predecir una ronda nueva con POCOS ensayos.
+#
+# `mean_logro` es el porcentaje del BANCO COMPLETO de ítems del año que un
+# estudiante contestaría bien. Eso lo vuelve independiente de qué ensayos
+# aplicó cada colegio —que era el punto del IRT— pero NO lo vuelve
+# independiente de qué ítems componen el banco de ese año. Si un año trae
+# 240 ítems y el siguiente 40, los dos "porcentajes del banco" se refieren
+# a bancos distintos, y su diferencia de nivel mezcla habilidad con
+# composición del banco.
+#
+# Importa porque el modelo de nivel usa `mean_logro_enc` EN NIVELES: un
+# banco más fácil sube el logro de todos los colegios y el modelo lo lee
+# como que mejoraron. Es la misma deriva entre años que 02 ya reporta,
+# pero amplificada cuando el número de formas cambia mucho.
+#
+# El indicador es el logro esperado a habilidad media (theta = 0): qué
+# porcentaje del banco de ese año contesta bien el estudiante promedio de
+# ESE año.
+#
+# CÓMO SE LEE, con cuidado: theta se estandariza dentro de cada año, así
+# que theta = 0 no es el mismo estudiante en 2024 que en 2025 — es el
+# promedio de cada cohorte. Por lo tanto este número NO separa "el banco se
+# hizo más fácil" de "la cohorte mejoró": mezcla las dos cosas, y sin
+# ítems ancla entre años no hay forma de separarlas (ver el encabezado de
+# 00). Lo que sí hace es MEDIR el tamaño del movimiento, y avisar cuando
+# cambia bruscamente el número de formas, que es cuando la composición del
+# banco es menos comparable y el movimiento tiene menos chance de ser real.
+banco_por_anio <- irt_items %>%
+  filter(is.finite(a), is.finite(b)) %>%
+  group_by(agno, grado, area) %>%
+  summarise(n_formas = n_distinct(forma), n_items = n(),
+            b_medio = mean(b),
+            logro_theta0 = 100 * mean(plogis(a * (0 - b))),
+            .groups = "drop")
+
+cat("\nComparabilidad del banco de ítems entre años:\n")
+cat("(logro_theta0 = qué porcentaje del banco de ese año contesta bien el\n")
+cat(" estudiante promedio de ese mismo año. Su movimiento mezcla dificultad\n")
+cat(" del banco con nivel de la cohorte: no las separa, sólo las mide.)\n")
+print(banco_por_anio %>%
+        mutate(across(c(b_medio, logro_theta0), ~round(.x, 2))) %>%
+        arrange(grado, area, agno) %>%
+        as.data.frame())
+
+# Aviso cuando el año más reciente se aparta del resto. El umbral es
+# deliberadamente bajo: 3 puntos de logro sobre el banco ya son del orden
+# del sesgo entre años que 02 reporta como problema abierto.
+deriva_banco <- banco_por_anio %>%
+  group_by(grado, area) %>%
+  arrange(agno, .by_group = TRUE) %>%
+  summarise(anio_nuevo = last(agno),
+            n_formas_nuevo = last(n_formas),
+            logro_nuevo = last(logro_theta0),
+            logro_previo = if (n() > 1) mean(logro_theta0[-n()]) else NA_real_,
+            .groups = "drop") %>%
+  mutate(salto = logro_nuevo - logro_previo)
+
+if (any(!is.na(deriva_banco$salto) & abs(deriva_banco$salto) > 3)) {
+  problemas <- deriva_banco %>% filter(!is.na(salto), abs(salto) > 3)
+  warning("El banco de ítems del año más reciente no es comparable con el ",
+          "de los años previos en: ",
+          paste(sprintf("%s %s (%+.1f pts de logro, %d forma(s))",
+                        problemas$grado, problemas$area, problemas$salto,
+                        problemas$n_formas_nuevo), collapse = "; "),
+          ". El modelo de nivel usa `mean_logro_enc` EN NIVELES, así que ",
+          "ese salto se traslada a la predicción como si fuera mejora real. ",
+          "Ver la nota de 02 sobre la especificación centrada.")
+  cat("\n*** AVISO: salto de banco entre años. Ver el warning. ***\n")
+  print(deriva_banco %>% mutate(across(where(is.numeric), ~round(.x, 2))) %>%
+          as.data.frame())
+}
+
 ## SIMCE POR ALUMNO (NUEVO) ----
 ruta_alu <- ruta_data_intermedia %>%
   file.path('simce', 'consolidado_datos_simce_alu.parquet')

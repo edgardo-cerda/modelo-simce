@@ -199,6 +199,36 @@ print(tabla_sd)
 # no agrega nada. (Deja de escribirse `curva_nivel_dispersion.rds`; no lo
 # consume ningún otro script.)
 
+# ---- MODELOS DE PRODUCCIÓN (NUEVO v11) --------------------------------
+# Mismo criterio que en 02: los de arriba dejan fuera el último año para
+# poder medir; para predecir una ronda nueva se usan todos los años
+# cerrados. 03 elige según el año que le toque predecir. Los límites de
+# recorte se recalculan sobre el mismo entrenamiento ampliado, porque son
+# los cuantiles 2 y 98 de la sd observada y tienen que corresponder a los
+# datos con que se ajustó el modelo.
+modelos_sd_produccion <- list()
+limites_sd_produccion <- list()
+
+for (i in seq_len(nrow(grupos))) {
+
+  g <- grupos$grado[i]; a <- grupos$area[i]
+  clave <- paste(g, a, sep = "_")
+
+  datos_grupo <- datos_sd %>% filter(grado == g, area == a)
+  if (nrow(datos_grupo) < 30) {
+    cat("Grupo", clave, ": muy pocos datos para el modelo de dispersión de producción.\n")
+    next
+  }
+
+  modelos_sd_produccion[[clave]] <- lm(formula_sd, data = datos_grupo,
+                                       weights = n_alu_simce)
+  limites_sd_produccion[[clave]] <- quantile(datos_grupo$sd_simce,
+                                             c(0.02, 0.98), names = FALSE)
+}
+
+cat("\nModelos de dispersión de producción (todos los años cerrados):",
+    length(modelos_sd_produccion), "grupos\n")
+
 # ---- Diagnóstico: sd observada vs. predicha --------------------------
 diag_sd <- map_dfr(names(modelos_sd), function(clave) {
   partes <- str_split(clave, "_", n = 2)[[1]]
@@ -233,6 +263,10 @@ ggsave(dir_salidas %>% file.path("diagnostico_dispersion.png"), p_sd, width = 8,
 saveRDS(modelos_sd, dir_salidas %>% file.path("modelos_dispersion.rds"))
 saveRDS(diag_sd,    dir_salidas %>% file.path("diag_dispersion.rds"))  # lo usa 05
 saveRDS(limites_sd, dir_salidas %>% file.path("limites_dispersion.rds"))
+saveRDS(modelos_sd_produccion,
+        dir_salidas %>% file.path("modelos_dispersion_produccion.rds"))
+saveRDS(limites_sd_produccion,
+        dir_salidas %>% file.path("limites_dispersion_produccion.rds"))
 write_csv(tabla_sd, dir_salidas %>% file.path("metricas_dispersion.csv"))
 
 cat("\nListo. Modelos de dispersión en",
