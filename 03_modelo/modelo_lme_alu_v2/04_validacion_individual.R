@@ -1,44 +1,41 @@
 # =============================================================
-# 04_validacion_individual.R   (NUEVO)
+# 04_validacion_individual.R
 # -------------------------------------------------------------
 # ¿Cómo se valida una predicción individual si no existe un vínculo
 # alumno-a-alumno entre el ensayo Santillana y el SIMCE?
 #
-# No se puede evaluar estudiante por estudiante. Pero sí se puede
-# evaluar algo casi tan útil, y que la v2 no podía evaluar en
-# absoluto: si el CONJUNTO de predicciones de un colegio reproduce
-# el conjunto de puntajes que ese colegio efectivamente obtuvo.
-# Es decir, comparar distribución predicha vs. distribución
-# observada, colegio por colegio.
+# No se puede evaluar estudiante por estudiante. Pero sí se puede evaluar
+# si el CONJUNTO de predicciones de un colegio reproduce el conjunto de
+# puntajes que ese colegio efectivamente obtuvo: distribución predicha vs.
+# distribución observada, colegio por colegio.
 #
 # Se hace con dos métricas:
 #
-#   1) ERROR DE CUANTILES: se comparan los percentiles 5, 10, ..., 95
-#      de las predicciones contra los mismos percentiles observados,
-#      y se promedia el error absoluto. Si da 10 puntos, significa
-#      que la distribución predicha está corrida ~10 puntos respecto
-#      de la real en un percentil típico. Es la distancia de
-#      Wasserstein-1 discretizada; captura errores de nivel, de ancho
-#      y de forma en un solo número.
+#   1) ERROR DE CUANTILES: se comparan los percentiles 5, 10, ..., 95 de
+#      las predicciones contra los mismos percentiles observados, y se
+#      promedia el error absoluto. Si da 10 puntos, la distribución
+#      predicha está corrida ~10 puntos respecto de la real en un
+#      percentil típico. Es la distancia de Wasserstein-1 discretizada:
+#      captura errores de nivel, de ancho y de forma en un solo número.
 #
 #   2) ERROR INDIVIDUAL BAJO RANKING PERFECTO: se le asigna a cada
 #      estudiante el puntaje observado que corresponde a su percentil
 #      dentro del colegio, y se mide el error contra su predicción.
-#      OJO: esto supone que el ensayo ordena perfectamente a los
-#      estudiantes, cosa que es falsa. Por lo tanto es una COTA
-#      OPTIMISTA del error individual real, no una estimación de él.
-#      Se reporta porque acota por abajo lo que se le puede prometer
-#      a un colegio.
+#      OJO: supone que el ensayo ordena perfectamente a los estudiantes,
+#      cosa que es falsa. Es una COTA OPTIMISTA del error individual real,
+#      no una estimación de él.
 #
-# Todo se compara contra dos referencias:
-#   - v2 legado: aplicar los coeficientes del colegio al estudiante.
-#   - "sólo la media": darle a todos los estudiantes del colegio el
-#     mismo puntaje predicho (lo que en la práctica se podía ofrecer
-#     antes de tener el archivo de alumnos).
+# Las dos se comparan contra el baseline de "sólo la media": darle a todos
+# los estudiantes del colegio el mismo puntaje predicho, que es lo que se
+# podía ofrecer antes de tener el archivo de alumnos.
 #
 # La validación es out-of-time: los modelos de 02 y 02b se entrenaron
 # excluyendo este año, y la forma de la distribución y la dispersión
 # histórica se calcularon en 01 con ventana expansiva.
+#
+# CUANDO SE PREDICE UNA RONDA NUEVA no hay SIMCE contra qué validar. Ese
+# es el caso normal en producción, así que el script avisa y termina bien
+# en vez de fallar.
 # =============================================================
 
 library(tidyverse)
@@ -61,15 +58,10 @@ cat("Validando predicciones individuales del año:", anio_val, "\n")
 
 obs <- simce_alumno %>% filter(agno == anio_val)
 
-# CAMBIO v11: predecir una ronda nueva (2026) es el caso NORMAL en
-# producción, y ahí no hay SIMCE contra qué validar todavía. Antes esto
-# abortaba con error y rompía la corrida completa del pipeline. Ahora
-# termina limpio y explica dónde están las métricas que sí valen.
-#
-# `quit(status = 0)` sólo se usa fuera de una sesión interactiva, que es
-# como corre el pipeline: así el script termina bien y la cadena sigue. En
-# una sesión interactiva no se puede cerrar R sin más, así que ahí se
-# levanta el error después de haber explicado el motivo.
+# `quit(status = 0)` sólo fuera de una sesión interactiva, que es como
+# corre el pipeline: así el script termina bien y la cadena sigue. En una
+# sesión interactiva no se puede cerrar R sin más, así que ahí se levanta
+# el error después de haber explicado el motivo.
 if (nrow(obs) == 0) {
   cat("\n-------------------------------------------------------------\n")
   cat("No hay SIMCE observado para", anio_val, ": no se puede validar\n")
@@ -96,10 +88,10 @@ obs_q <- obs %>%
   group_by(grado, area, rbd_revisado) %>%
   filter(n() >= MIN_ALU_VALID) %>%
   summarise(
-    n_obs   = n(),
+    n_obs     = n(),
     media_obs = mean(ptje),
-    sd_obs  = sd(ptje),
-    q_obs   = cuantiles(ptje),
+    sd_obs    = sd(ptje),
+    q_obs     = cuantiles(ptje),
     .groups = "drop"
   )
 
@@ -107,13 +99,11 @@ pred_q <- pred_individual %>%
   group_by(grado, area, rbd_revisado) %>%
   filter(n() >= 10) %>%
   summarise(
-    n_pred        = n(),
-    pred_colegio  = first(pred_simce_colegio),
-    sd_predicha   = first(sd_simce_pred),
-    q_B           = cuantiles(pred_B),
-    q_v2          = cuantiles(pred_v2_legado),
-    sd_B          = sd(pred_B, na.rm = TRUE),
-    sd_v2         = sd(pred_v2_legado, na.rm = TRUE),
+    n_pred       = n(),
+    pred_colegio = first(pred_simce_colegio),
+    sd_predicha  = first(sd_simce_pred),
+    q_B          = cuantiles(pred_B),
+    sd_B         = sd(pred_B, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   filter(!is.na(pred_colegio))
@@ -121,54 +111,25 @@ pred_q <- pred_individual %>%
 comp <- pred_q %>%
   inner_join(obs_q, by = c("grado", "area", "rbd_revisado")) %>%
   mutate(
-    q_solo_media = map(pred_colegio, ~ rep(.x, length(QS))),
+    q_solo_media    = map(pred_colegio, ~ rep(.x, length(QS))),
     qmae_B          = map2_dbl(q_B, q_obs, ~ mean(abs(.x - .y))),
-    qmae_v2         = map2_dbl(q_v2, q_obs, ~ mean(abs(.x - .y))),
     qmae_solo_media = map2_dbl(q_solo_media, q_obs, ~ mean(abs(.x - .y))),
     error_sd_B      = sd_B - sd_obs,
-    error_sd_v2     = sd_v2 - sd_obs,
     error_media     = pred_colegio - media_obs
   )
-
-# ---- 1b. Oráculo: la misma versión B pero con la media y la sd
-# OBSERVADAS del colegio. No es una predicción (usa información que no
-# existe al momento de predecir): sirve para separar cuánto del error
-# viene de predecir el colegio y cuánto de repartir hacia los estudiantes.
-# Si esta columna da un error mucho más bajo, el problema está en el
-# modelo de colegio, no en la plantilla de forma.
-if ("z_forma" %in% names(pred_individual)) {
-
-  q_oraculo <- pred_individual %>%
-    inner_join(obs_q %>% select(grado, area, rbd_revisado, media_obs, sd_obs),
-               by = c("grado", "area", "rbd_revisado")) %>%
-    mutate(pred_B_oraculo = media_obs + sd_obs * z_forma) %>%
-    group_by(grado, area, rbd_revisado) %>%
-    summarise(q_oraculo = cuantiles(pred_B_oraculo), .groups = "drop")
-
-  comp <- comp %>%
-    left_join(q_oraculo, by = c("grado", "area", "rbd_revisado")) %>%
-    mutate(qmae_B_oraculo = map2_dbl(q_oraculo, q_obs,
-                                     ~ if (is.null(.x)) NA_real_ else mean(abs(.x - .y))))
-} else {
-  warning("pred_individual no trae z_forma: no se puede calcular el oráculo.")
-  comp$qmae_B_oraculo <- NA_real_
-}
 
 cat("\nColegios validados:", nrow(comp), "\n\n")
 
 resumen_dist <- comp %>%
   group_by(grado, area) %>%
   summarise(
-    n_colegios       = n(),
-    qmae_B           = mean(qmae_B),
-    qmae_v2_legado   = mean(qmae_v2),
-    qmae_solo_media  = mean(qmae_solo_media),
-    qmae_B_oraculo   = mean(qmae_B_oraculo, na.rm = TRUE),
-    sd_observada     = mean(sd_obs),
-    sd_predicha      = mean(sd_predicha),
-    sd_efectiva_B    = mean(sd_B),
-    sd_efectiva_v2   = mean(sd_v2),
-    error_abs_media  = mean(abs(error_media)),
+    n_colegios      = n(),
+    qmae_B          = mean(qmae_B),
+    qmae_solo_media = mean(qmae_solo_media),
+    sd_observada    = mean(sd_obs),
+    sd_predicha     = mean(sd_predicha),
+    sd_efectiva_B   = mean(sd_B),
+    error_abs_media = mean(abs(error_media)),
     .groups = "drop"
   )
 
@@ -203,10 +164,9 @@ emparejado <- pred_individual %>%
 resumen_ind <- emparejado %>%
   group_by(grado, area) %>%
   summarise(
-    n_estudiantes   = n(),
-    mae_B           = mean(abs(pred_B - obs_emparejado), na.rm = TRUE),
-    mae_v2_legado   = mean(abs(pred_v2_legado - obs_emparejado), na.rm = TRUE),
-    mae_solo_media  = mean(abs(pred_simce_colegio - obs_emparejado), na.rm = TRUE),
+    n_estudiantes  = n(),
+    mae_B          = mean(abs(pred_B - obs_emparejado), na.rm = TRUE),
+    mae_solo_media = mean(abs(pred_simce_colegio - obs_emparejado), na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -215,18 +175,11 @@ print(resumen_ind %>% mutate(across(where(is.numeric), ~round(.x, 2))))
 cat("\nRecordatorio: el emparejamiento supone que el ensayo ordena perfecto a\n",
     "los estudiantes. El error individual REAL es mayor que éste.\n\n")
 
-# SECCIÓN 3 (sensibilidad a rho): ELIMINADA EN v9 -----------------------
-# Movía rho entre 0.6 y 1.0 y reportaba MAE, cobertura y ancho del rango.
-# No podía concluir nada por construcción: sus dos métricas empujan en
-# direcciones opuestas y la del error emparejado favorece rho=1
-# mecánicamente (supone ranking perfecto). Con la versión A fuera del
-# pipeline (ver 03), rho ya no existe.
-
-# ---- 3b. Desglose por contexto ---------------------------------------
-# ¿El modelo funciona parejo entre estratos, o sólo en los que dominan
-# la base Santillana (particular pagado, GSE alto)? Si el error es
-# claramente peor en un estrato con pocos colegios, conviene decirlo
-# antes de que el reporte llegue a ese colegio.
+# ---- 3. Desglose por contexto ---------------------------------------
+# ¿El modelo funciona parejo entre estratos, o sólo en los que dominan la
+# base Santillana (particular pagado, GSE alto)? Si el error es claramente
+# peor en un estrato con pocos colegios, conviene decirlo antes de que el
+# reporte llegue a ese colegio.
 por_estrato <- comp %>%
   left_join(
     pred_individual %>%
@@ -241,14 +194,13 @@ por_estrato <- comp %>%
             sd_obs = mean(sd_obs),
             .groups = "drop")
 
-cat("\nERROR POR ESTRATO GSE (ojo con los estratos de pocos colegios):\n")
+cat("ERROR POR ESTRATO GSE (ojo con los estratos de pocos colegios):\n")
 print(por_estrato %>% mutate(across(where(is.numeric), ~round(.x, 1))))
 
 # ---- 4. Gráficos ------------------------------------------------------
 # (i) Distribución predicha vs. observada, agrupando todos los colegios.
 dens_data <- bind_rows(
-  emparejado %>% transmute(grado, area, valor = pred_B, fuente = "Predicción (percentil)"),
-  emparejado %>% transmute(grado, area, valor = pred_v2_legado, fuente = "v2 legado"),
+  emparejado %>% transmute(grado, area, valor = pred_B, fuente = "Predicción"),
   obs %>% inner_join(distinct(pred_individual, grado, area, rbd_revisado),
                      by = c("grado", "area", "rbd_revisado")) %>%
     transmute(grado, area, valor = ptje, fuente = "Observado")
@@ -267,28 +219,22 @@ ggsave(dir_salidas %>% file.path("validacion_distribucion_individual.png"),
        p1, width = 10, height = 7)
 
 # (ii) Dispersión predicha vs. observada por colegio.
-p2 <- comp %>%
-  select(grado, area, sd_obs, `Predicción` = sd_B, `v2 legado` = sd_v2) %>%
-  pivot_longer(c(`Predicción`, `v2 legado`), names_to = "fuente", values_to = "sd_pred") %>%
-  ggplot(aes(sd_obs, sd_pred, color = fuente)) +
+p2 <- ggplot(comp, aes(sd_obs, sd_B)) +
   geom_point(alpha = 0.4) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
   facet_wrap(~ grado + area, scales = "free") +
   labs(title = "Dispersión interna: predicha vs. observada",
-       x = "sd observada entre estudiantes", y = "sd de las predicciones", color = NULL) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
+       x = "sd observada entre estudiantes", y = "sd de las predicciones") +
+  theme_minimal()
 
 ggsave(dir_salidas %>% file.path("validacion_dispersion_individual.png"),
        p2, width = 10, height = 7)
 
-# ---- 4b. Densidades resumidas para la presentación (NUEVO) -----------
-# El gráfico de distribución predicha vs. observada se arma acá y no en
-# 05 porque `emparejado` y `obs` tienen millones de filas. Se guarda la
-# curva ya evaluada en una grilla de 256 puntos por serie: unas pocas
-# miles de filas en total.
+# ---- 4b. Densidades resumidas para la presentación -------------------
+# El gráfico se arma acá y no en la presentación porque `emparejado` y
+# `obs` tienen millones de filas. Se guarda la curva ya evaluada en una
+# grilla de 256 puntos por serie: unas pocas miles de filas en total.
 dens_validacion <- dens_data %>%
-  filter(fuente %in% c("Observado", "Predicción (percentil)")) %>%
   filter(!is.na(valor)) %>%
   group_by(grado, area, fuente) %>%
   group_modify(~ {
@@ -297,30 +243,30 @@ dens_validacion <- dens_data %>%
   }) %>%
   ungroup()
 
-# ---- 4c. Distribución por Niveles de Aprendizaje (NUEVO) -------------
+# ---- 4c. Distribución por Niveles de Aprendizaje ---------------------
 # Traduce puntajes a las categorías que los colegios efectivamente usan
-# (Insuficiente / Elemental / Adecuado) y compara la distribución real
-# con la que predice el modelo. Es la lectura más directa de si la
-# predicción sirve para la pregunta "¿cuántos de mis estudiantes
-# quedarían en cada nivel?".
+# (Insuficiente / Elemental / Adecuado) y compara la distribución real con
+# la que predice el modelo. Es la lectura más directa de si la predicción
+# sirve para la pregunta "¿cuántos de mis estudiantes quedarían en cada
+# nivel?".
 #
-# ¡IMPORTANTE! Los puntajes de corte son fijados por la Agencia de
-# Calidad de la Educación en los Estándares de Aprendizaje, NO se
-# estiman de los datos. Los valores de abajo provienen de los documentos
-# oficiales del Mineduc:
+# ¡IMPORTANTE! Los puntajes de corte son fijados por la Agencia de Calidad
+# de la Educación en los Estándares de Aprendizaje, NO se estiman de los
+# datos. Los valores de abajo provienen de los documentos oficiales del
+# Mineduc:
 #
 #   4° básico Lectura     Elemental >= 241, Adecuado >= 284
 #   4° básico Matemática  Elemental >= 245, Adecuado >= 295
 #   2° medio  Lectura     Elemental >= 250, Adecuado >= 295
 #   2° medio  Matemática  Elemental >= 252, Adecuado >= 319
 #
-# Los tres primeros están verificados contra los Estándares publicados
-# en curriculumnacional.cl; el de 2° medio Matemática viene de una copia
-# del mismo documento y conviene confirmarlo antes de publicar cifras.
-# Además, los Estándares de 2° medio figuran como "no vigentes" en el
-# portal: si la Agencia actualizó los cortes para los años de estos
-# datos, hay que reemplazarlos acá. Un corte equivocado no rompe nada,
-# simplemente clasifica mal y en silencio.
+# Los tres primeros están verificados contra los Estándares publicados en
+# curriculumnacional.cl; el de 2° medio Matemática viene de una copia del
+# mismo documento y conviene confirmarlo antes de publicar cifras. Además,
+# los Estándares de 2° medio figuran como "no vigentes" en el portal: si la
+# Agencia actualizó los cortes para los años de estos datos, hay que
+# reemplazarlos acá. Un corte equivocado no rompe nada, simplemente
+# clasifica mal y en silencio.
 CORTES_NIVEL <- tribble(
   ~grado, ~area,        ~corte_elemental, ~corte_adecuado,
   "4b",   "lenguaje",   241,              284,
@@ -343,11 +289,10 @@ clasificar_nivel <- function(datos, columna_puntaje) {
     )
 }
 
-# Se usa el MISMO universo que el resto de la validación: sólo los
-# colegios que quedaron en `comp` (con predicción y con al menos
-# MIN_ALU_VALID alumnos observados). Comparar la distribución observada
-# de todos los colegios contra la predicha de un subconjunto mezclaría
-# el error del modelo con una diferencia de composición.
+# Se usa el MISMO universo que el resto de la validación: sólo los colegios
+# que quedaron en `comp`. Comparar la distribución observada de todos los
+# colegios contra la predicha de un subconjunto mezclaría el error del
+# modelo con una diferencia de composición.
 colegios_validados <- comp %>% distinct(grado, area, rbd_revisado)
 
 niveles_obs <- obs %>%
@@ -375,7 +320,7 @@ niveles_logro <- niveles_obs %>%
          dif_pp = 100 * (pct_pred - pct_obs)) %>%
   arrange(grado, area, nivel)
 
-cat("DISTRIBUCIÓN POR NIVEL DE APRENDIZAJE (observada vs. predicha):\n")
+cat("\nDISTRIBUCIÓN POR NIVEL DE APRENDIZAJE (observada vs. predicha):\n")
 print(niveles_logro %>%
         transmute(grado, area, nivel,
                   `% real` = round(100 * pct_obs, 1),
@@ -390,11 +335,11 @@ cat("\nRecordatorio: los cortes son los oficiales de los Estándares de\n",
     "Aprendizaje, no salen de estos datos. Ver el encabezado de esta sección.\n\n")
 
 # ---- 5. Guardar ------------------------------------------------------
-saveRDS(niveles_logro,   dir_salidas %>% file.path("niveles_logro.rds"))      # lo usa 05
+saveRDS(niveles_logro,   dir_salidas %>% file.path("niveles_logro.rds"))
 write_csv(niveles_logro, dir_salidas %>% file.path("validacion_niveles_logro.csv"))
-saveRDS(dens_validacion, dir_salidas %>% file.path("dens_validacion.rds"))   # lo usa 05
+saveRDS(dens_validacion, dir_salidas %>% file.path("dens_validacion.rds"))
 saveRDS(comp %>% select(-starts_with("q_")),
-        dir_salidas %>% file.path("validacion_por_colegio.rds"))             # lo usa 05
+        dir_salidas %>% file.path("validacion_por_colegio.rds"))
 write_csv(comp %>% select(-starts_with("q_")),
           dir_salidas %>% file.path("validacion_por_colegio.csv"))
 write_csv(resumen_dist, dir_salidas %>% file.path("validacion_distribucional.csv"))

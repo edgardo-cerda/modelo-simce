@@ -1,5 +1,5 @@
 # =============================================================
-# 03_prediccion_nueva_ronda.R  (v9 - una sola versión de predicción)
+# 03_prediccion_nueva_ronda.R
 # -------------------------------------------------------------
 # Aplica los modelos de 02 (nivel) y 02b (dispersión) para predecir
 # la "próxima ronda" a nivel de colegio y de estudiante.
@@ -32,32 +32,16 @@
 #   individuales son puntualmente menos precisas de lo que su dispersión
 #   sugiere. Lo que sí reproduce bien es el CONJUNTO.
 #
-# -------------------------------------------------------------
-# CAMBIO v9: SALE LA VERSIÓN A, Y CON ELLA `rho`
-# -------------------------------------------------------------
-# La versión A era `mu_hat + rho * sd_hat * z_ensayo`: encogía hacia el
-# promedio del colegio y devolvía un rango p10-p90 por estudiante.
+# No necesita ningún parámetro libre: la forma de la distribución se
+# OBSERVA en ~6.400 colegios reales en vez de suponerse. Todo lo que el
+# script entrega es verificable contra datos.
 #
-# El problema era `rho`. No es estimable con estos datos —haría falta un
-# vínculo alumno-a-alumno entre el ensayo Santillana y el SIMCE, que no
-# existe— y su valor salía de reparametrizar un 0.70 elegido a mano en la
-# v4. Era el número menos defendible del pipeline, y arrastraba consigo el
-# modo `RHO_MODO`, la tabla `rho_sugerido` de 01, la varianza residual en
-# dos componentes y un análisis de sensibilidad en 04 que, por
-# construcción, no podía concluir nada (sus dos métricas empujan en
-# direcciones opuestas y una favorece rho=1 mecánicamente).
-#
-# El matching por percentil no necesita ningún parámetro libre: la forma
-# de la distribución se OBSERVA en ~6.400 colegios reales en vez de
-# suponerse. Se pierde el intervalo por estudiante; a cambio, todo lo que
-# el script entrega es verificable contra datos.
-#
-# La predicción no puede validarse estudiante por estudiante, pero SÍ a
-# nivel de distribución contra los puntajes individuales reales: ver
-# 04_validacion_individual.R.
+# La predicción no puede validarse estudiante por estudiante —no existe
+# vínculo alumno-a-alumno entre el ensayo y el SIMCE— pero sí a nivel de
+# distribución: ver 04_validacion_individual.R.
 #
 # -------------------------------------------------------------
-# CÓMO SE CORRE UNA RONDA NUEVA (v11)
+# CÓMO SE CORRE UNA RONDA NUEVA
 # -------------------------------------------------------------
 # El pipeline es el mismo de siempre —00, 01, 02, 02b, 03, 04— y se adapta
 # solo. No hay modo, flag ni parámetro que cambiar:
@@ -88,11 +72,6 @@
 # =============================================================
 
 library(tidyverse)
-# NOTA v9: hasta la v8 hacía falta `library(splines)` acá, aunque este
-# script no escriba ningún `ns()`: los modelos de 02b llevaban splines en
-# su fórmula y `predict()` los reconstruye evaluando los `predvars`
-# guardados en el modelo. El modelo de dispersión pasó a ser lineal, así
-# que la dependencia se fue.
 
 # ---- 0. Configuración --------------------------------------------
 usuario <- Sys.info()[["user"]]
@@ -110,7 +89,7 @@ anios_cerrados  <- dir_salidas %>% file.path("anios_cerrados.rds") %>% readRDS()
 
 anio_prediccion <- max(school_features$agno)
 
-# ---- 1b. Qué juego de modelos corresponde (NUEVO v11) ---------------
+# ---- 1b. Qué juego de modelos corresponde ---------------------------
 # Una sola regla: SE USA EL MODELO QUE NO VIO EL AÑO QUE SE PREDICE.
 #
 #   - Año objetivo SIN SIMCE (una ronda nueva, p.ej. 2026): ningún modelo
@@ -205,8 +184,8 @@ write_csv(
            agno_contexto, n_anios_nivel_hist,
            # Las DOS: `mean_logro` es el nivel observado del colegio en el
            # ensayo y `mean_logro_enc` el que efectivamente entra al modelo.
-           # Exportar sólo el primero, como hacía la v8, dejaba el reporte
-           # mostrando una cifra distinta de la que produjo la predicción.
+           # Exportar sólo el primero deja el reporte mostrando una cifra
+           # distinta de la que produjo la predicción.
            mean_logro, mean_logro_enc, conf_mean_logro,
            contexto_nivel, desvio_nivel, nivel_hist_colegio,
            contexto_sd, sd_hist_colegio,
@@ -273,71 +252,28 @@ pred_B <- ind_pred %>%
     pred_B = pmin(pmax(pred_B, ptje_min), ptje_max)
   )
 
-# ---- 5. Versión v2 (legado), sólo para comparar ---------------------
-# Es lo que hacía la versión anterior: aplicarle los coeficientes del
-# modelo de colegio a las features del estudiante. Se conserva para que
-# 04 pueda mostrar cuánto se gana con el cambio.
-predecir_legado <- function(datos, clave) {
+pred_individual <- pred_B
 
-  if (!clave %in% names(modelos)) {
-    datos$pred_v2_legado <- NA_real_
-    return(datos)
-  }
-
-  modelo    <- modelos[[clave]]
-  faltantes <- setdiff(all.vars(delete.response(terms(modelo))), names(datos))
-
-  # `mean_logro_enc` (v5) existe SÓLO a nivel de colegio: es el promedio del
-  # colegio encogido hacia el promedio de su grupo según la confiabilidad de
-  # esa medición (01, secc. 5b-bis), y no tiene contraparte por estudiante.
-  # Como esta función es justamente la versión legado —aplicarle los
-  # coeficientes del colegio a las features del ESTUDIANTE—, el análogo
-  # individual del término de logro es el `mean_logro` del propio estudiante,
-  # que es lo que llevaba la fórmula de la v4. Sin esto, predict() aborta con
-  # "objeto 'mean_logro_enc' no encontrado" y se cae el script entero.
-  if ("mean_logro_enc" %in% faltantes) {
-    datos$mean_logro_enc <- datos$mean_logro
-    faltantes <- setdiff(faltantes, "mean_logro_enc")
-  }
-
-  if (length(faltantes) > 0) {
-    warning("La comparación legado se omite en ", clave,
-            ": el modelo de 02 usa predictores que no existen a nivel de ",
-            "estudiante (", paste(faltantes, collapse = ", "), ").")
-    datos$pred_v2_legado <- NA_real_
-    return(datos)
-  }
-
-  datos$pred_v2_legado <- predict(modelo, newdata = datos)
-  datos
-}
-
-pred_individual <- pred_B %>%
-  group_split(grado, area) %>%
-  map_dfr(~ predecir_legado(.x, paste(.x$grado[1], .x$area[1], sep = "_")))
-
-# ---- 6. Chequeos de coherencia --------------------------------------
-# (i) El promedio de las predicciones individuales debe reproducir la
-#     predicción del colegio (la plantilla de forma tiene media ~0).
-# (ii) La sd de las predicciones debe reproducir el ancho predicho, o sea
-#     razon_sd cerca de 1. La versión v2 legado daba ~0.1-0.2, que es
-#     exactamente el defecto que este diseño vino a corregir.
+# ---- 5. Chequeos de coherencia --------------------------------------
+# (i) El promedio de las predicciones individuales de un colegio debe
+#     reproducir la predicción del colegio: la plantilla de forma tiene
+#     media ~0, así que el reparto no puede correr el centro.
+# (ii) La sd de esas predicciones debe reproducir el ancho predicho, o sea
+#     razon_sd_B cerca de 1.
 chequeo <- pred_individual %>%
   group_by(agno, grado, area, rbd_revisado) %>%
   summarise(
     n_est          = n(),
     media_B        = mean(pred_B, na.rm = TRUE),
     sd_B           = sd(pred_B, na.rm = TRUE),
-    sd_v2_legado   = sd(pred_v2_legado, na.rm = TRUE),
     pred_colegio   = first(pred_simce_colegio),
     sd_predicha    = first(sd_simce_pred),
     rel_media      = mean(rel_indice, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(
-    dif_media_B   = media_B - pred_colegio,
-    razon_sd_B    = sd_B / sd_predicha,         # debería dar ~1
-    razon_sd_v2   = sd_v2_legado / sd_predicha  # la v2 daba ~0.1-0.2
+    dif_media_B = media_B - pred_colegio,
+    razon_sd_B  = sd_B / sd_predicha
   )
 
 cat("\nChequeos de coherencia (promedios sobre colegios):\n")
@@ -346,13 +282,11 @@ print(chequeo %>%
         summarise(
           dif_media_B_abs = mean(abs(dif_media_B), na.rm = TRUE),
           razon_sd_B      = mean(razon_sd_B, na.rm = TRUE),
-          razon_sd_legado = mean(razon_sd_v2, na.rm = TRUE),
           .groups = "drop"
         ) %>% mutate(across(where(is.numeric), ~round(.x, 3))))
-cat("\n(dif_media_B_abs cerca de 0 y razon_sd_B cerca de 1. razon_sd_legado\n",
-    " muestra cuánta dispersión perdía la versión anterior.)\n\n")
+cat("\n(dif_media_B_abs cerca de 0 y razon_sd_B cerca de 1.)\n\n")
 
-# ---- 7. Guardar ------------------------------------------------------
+# ---- 6. Guardar ------------------------------------------------------
 salida_individual <- pred_individual %>%
   select(agno, grado, area, rbd_revisado, id_usuario_curso,
          gse_etiqueta, depe2_etiqueta, rural_etiqueta,
@@ -364,7 +298,7 @@ salida_individual <- pred_individual %>%
          rel_indice,
          pct_ensayo, z_ensayo,
          pred_simce_colegio, sd_simce_pred,
-         pred_B, pred_v2_legado)
+         pred_B)
 
 write_csv(salida_individual, dir_salidas %>% file.path("predicciones_individual.csv"))
 saveRDS(pred_individual, dir_salidas %>% file.path("predicciones_individual.rds"))
@@ -373,7 +307,7 @@ write_csv(chequeo, dir_salidas %>% file.path("chequeo_coherencia.csv"))
 
 cat("Listo. Archivos generados en ", dir_salidas, ":\n",
     " - predicciones_colegio.csv    (media y ancho predichos por colegio)\n",
-    " - predicciones_individual.csv (predicción por estudiante y legado v2)\n",
+    " - predicciones_individual.csv (predicción por estudiante)\n",
     " - chequeo_coherencia.csv\n",
     "\nSiguiente paso: 04_validacion_individual.R\n")
 

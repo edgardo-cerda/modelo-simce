@@ -1,0 +1,649 @@
+===============================================================================
+REGISTRO DE VERSIONES Y PRUEBAS — modelo_lme_alu_v2
+===============================================================================
+
+Qué es este archivo
+-------------------
+Los scripts del modelo quedaron limpios: explican lo que hacen, no la historia
+de cómo llegaron a hacerlo. Este documento guarda esa historia — las versiones,
+las pruebas que se corrieron, lo que se descartó y por qué.
+
+Sirve para dos cosas. Para no volver a probar lo ya probado, y para poder
+revisar una decisión cuando cambien los datos: casi todas las decisiones de
+abajo se tomaron con tres años de ensayo (2023-2025) y cuatro grupos
+grado × área, y varias podrían darse vuelta con más años.
+
+Convención de las cifras: MAE y error de cuantiles en puntos SIMCE; las
+brechas y correlaciones donde se indica. Todo out-of-time salvo aviso expreso.
+
+
+===============================================================================
+1. HISTORIAL DE VERSIONES
+===============================================================================
+
+v1-v2  Modelo inicial
+       Regresión del promedio SIMCE del colegio sobre variables del ensayo. La
+       predicción individual se hacía aplicando los coeficientes del colegio a
+       las features de cada estudiante.
+       PROBLEMA: producía distribuciones individuales demasiado angostas. Los
+       coeficientes se estimaron sobre PROMEDIOS de colegio, cuya variabilidad
+       es mucho menor que la de los estudiantes. La sd de las predicciones
+       quedaba en 0.10-0.20 veces la real.
+
+v3     Se incorpora el archivo SIMCE por alumno. Habilita dos cosas nuevas:
+       modelar la DISPERSIÓN interna del colegio (02b) y conocer la FORMA
+       empírica de la distribución interna (forma_z), que reemplaza el
+       supuesto de normalidad.
+       La predicción individual pasa a construirse como
+       media del colegio + ancho del colegio × posición del estudiante.
+
+v4     Entran las variables de contexto (GSE, dependencia, ruralidad) como
+       PRIOR del efecto histórico del colegio, estimadas sobre el universo
+       nacional y transferidas como un número. Contexto rezagado: se usa
+       siempre el último registro estrictamente anterior al año objetivo.
+
+v5     Índice individual encogido por confiabilidad. Renombres para separar el
+       histórico del NIVEL del de la DISPERSIÓN. Salen `slope_logro` y
+       `n_evals_prom` del modelo de nivel.
+
+v6     Calibración IRT concurrente (00). `mean_logro` pasa a ser el puntaje
+       verdadero sobre el banco completo de ítems del año.
+
+v7     Vuelve la pendiente al modelo de crecimiento, ahora sobre logro
+       ajustado por IRT. Se agrega la comparación de especificaciones en dos
+       ventanas.
+
+v8     Sale `pred_final_logro` de las especificaciones candidatas. El
+       encogimiento del nivel escolar pasa a hacerse en escala theta.
+
+v9     SIMPLIFICACIÓN. Siete eliminaciones (detalle en la sección 3).
+       -1177 líneas. Ninguna métrica se movió materialmente.
+
+v10    Sexo del alumno, sólo para validar (rama modelo-final, NO está en main).
+       Ver sección 5.
+
+v11    Versión de producción: entrenar con todos los años cerrados y predecir
+       una ronda nueva. Ver sección 6.
+
+v12    Limpieza de los scripts y creación de este registro.
+
+v13    01 se parte en 01a (insumos de SIMCE) y 01b (insumos del ensayo).
+       Ver sección 6b.
+
+v14    Calibración incremental en 00 y empaquetado de la ruta de
+       predicción para un equipo que no usa R. Ver sección 6c.
+
+
+===============================================================================
+2. PRUEBAS SOBRE LA ESPECIFICACIÓN DEL MODELO DE NIVEL
+===============================================================================
+
+2.1 Variables que salieron de la fórmula
+----------------------------------------
+`slope_logro` (v5). Los ensayos no forman una progresión: tienen dificultades
+propias y no ordenadas. En 4b matemática 2025 el logro medio por ensayo va
+61.0, 62.2, 68.2, 60.1, 70.4, 72.8. Una pendiente sobre esa secuencia mide
+sobre todo cuáles se aplicaron.
+    Efecto de sacarla: MAE entre -0.13 y +0.02. Nada.
+
+`n_evals_prom` (v5). Entraba de forma aditiva y no hay razón por la que el
+número de ensayos deba subir o bajar el SIMCE linealmente. Lo que sí indica es
+la PRECISIÓN de `mean_logro`, y por ahí entra ahora vía el encogimiento por
+confiabilidad.
+
+`pred_final_logro` (v7). Sacada la pendiente, el promedio por colegio de los
+interceptos encogidos por lme4 ES el `mean_logro` encogido: la fórmula tenía
+dos versiones de la misma cantidad con dos mecanismos de encogimiento.
+    - Correlación con `mean_logro_enc`: 0.995 a 0.999. VIF de 73 a 360.
+    - Residuo al regresar una sobre otra: sd 0.45-0.85 contra sd propia ~9.5
+      (R² 0.99-0.998). Ese residuo es el recorte a [0,100], no señal.
+    - MAE: 10.3 con las dos, 10.2 con una sola. No decidía.
+    - LO QUE DECIDIÓ: la estabilidad. Dejando un año fuera del entrenamiento,
+      con ambas variables los coeficientes hacen balancín (+31.6 y -28.4 en
+      2m matemática; en tres de cuatro grupos el de logro sale negativo
+      compensado por el otro). Con una sola queda entre 0.6 y 1.7, signo
+      estable y lectura directa.
+
+CRITERIO QUE QUEDÓ: con tres años y dos ventanas, la estabilidad del
+coeficiente es mejor criterio que el MAE para elegir entre especificaciones
+parecidas.
+
+2.2 Contexto como término aparte
+--------------------------------
+Probado `promedio_simce ~ mean_logro_enc + nivel_hist_colegio + contexto_nivel`.
+No aportó: MAE entre -0.2 y +0.3, peor en un grupo. Con 150-220 filas por grupo
+es un grado de libertad que no se paga. El contexto ya está DENTRO de
+`nivel_hist_colegio` (correlaciona 0.70 con él).
+    Donde sí vale: en colegios sin historia. Sin efecto histórico, el contexto
+    sube el R² out-of-time de 0.40 a 0.62-0.66. Por eso entra como PRIOR y no
+    como predictor aparte.
+
+2.3 Encogimiento de `mean_logro`
+--------------------------------
+Con 45-72 alumnos por colegio la confiabilidad del promedio escolar ya es de
+0.90-0.97 (p10 entre 0.79 y 0.94), así que el encogimiento es suave y NO mejora
+el MAE: out-of-time queda entre neutro y ~0.25 peor. Se mantiene por corrección
+y por reemplazar un término ininterpretable, no por precisión.
+
+2.4 Especificaciones comparadas en dos ventanas (v7-v11)
+--------------------------------------------------------
+Ventana A: entrena 2023 -> predice 2024 (para elegir).
+Ventana B: entrena 2023+2024 -> predice 2025 (held-out, sólo reporte).
+
+    actual : promedio_simce ~ mean_logro_enc + nivel_hist_colegio
+    C      : idem con mean_logro_enc_c (centrado dentro del año)
+    E      : C + agno
+
+Se eligió `actual`. La tensión entre `actual` y `C` —centrar o no— quedó
+ABIERTA y es real: `C` cancela por construcción la deriva entre años, que es
+la mitad del error actual. No se resolvió porque con tres años el test no tiene
+resolución para decidirlo. Si en algún momento se retoma, la columna
+`mean_logro_enc_c` sigue calculándose en 01.
+
+Las specs A, B y D (que metían `pred_final_logro` o su versión centrada)
+salieron en v8: colinealidad ya documentada y en ninguna ventana quedaban
+competitivas.
+
+2.5 Sesgo sistemático entre años (PENDIENTE, no resuelto)
+---------------------------------------------------------
+El logro en los ensayos sube todos los años y el SIMCE no lo sigue. En el panel
+de colegios con SIMCE observado el logro IRT subió de 2023 a 2025 en los cuatro
+grupos mientras el SIMCE 2025 CAYÓ en tres.
+    Sesgo out-of-time: +4.1 puntos en promedio (rango +0.5 a +5.9), sobre un
+    MAE de ~10. Alrededor de la mitad del error no es ruido.
+
+Corroboración desde el lado del banco de ítems: el logro esperado a habilidad
+media sube entre 2023 y 2025 en los cuatro grupos.
+    2m lenguaje    59.9 -> 61.1 -> 65.9
+    2m matemática  31.6 -> 37.1 -> 38.1
+    4b lenguaje    60.0 -> 62.3 -> 64.3
+    4b matemática  60.7 -> 67.5 -> 68.2
+OJO CON LA LECTURA: theta se estandariza dentro de cada año, así que ese
+número mezcla dificultad del banco con nivel de la cohorte. NO las separa.
+
+Parte de la deriva es composición (cada año entran colegios nuevos), parte
+dificultad de las formas y parte puede ser real. Con tres años no se separan.
+
+
+===============================================================================
+3. LA SIMPLIFICACIÓN DE LA v9 — QUÉ SE ELIMINÓ Y QUÉ COSTÓ
+===============================================================================
+
+Criterio: quitar es estadísticamente más seguro que agregar. Una eliminación se
+testea contra la hipótesis nula de que no cambia nada, que es un test mucho más
+benigno que elegir entre alternativas.
+
+3.1 Modelo de crecimiento (12 modelos mixtos)
+---------------------------------------------
+    logro_irt_eval ~ n_evaluacion_c + (1 | alumno) + (1 + n_evaluacion_c | rbd)
+Producía `pred_final_logro`, `slope_logro` y `nivel_est`. Ninguna entraba en
+una fórmula de producción. Se verificó por grep en todo el repo.
+Con él se fue `irt_theta_forma.rds` y el bloque 4d-bis de 00 (un `fscores`
+extra por forma y grupo, lo más lento después de la calibración).
+    COSTO: cero. El MAE no se movió (10.15 contra los 10.2 documentados).
+
+3.2 Composición del índice individual con la otra área
+------------------------------------------------------
+Era un BLUP bivariado con la correlación verdadera entre áreas estimada por
+desatenuación.
+    GANANCIA MEDIDA: 0.003 a 0.009 de confiabilidad.
+El "+4 a +10 puntos" que prometía el comentario original era real pero ANTERIOR
+AL IRT: se calculó cuando la precisión se aproximaba por sigma²/k. Con theta la
+confiabilidad propia ya está en 0.82-0.91 y no queda nada que la otra área
+pueda agregar. Dos piezas resolvían el mismo problema.
+
+Además, el ordenamiento que producía el índice es indistinguible de rankear por
+theta a secas: Spearman dentro del colegio de 0.995-0.998 (p10 0.966-0.990).
+Como la predicción individual usa sólo el RANGO, el encogimiento importa para
+interpretar, no para predecir.
+
+3.3 La rama de logro crudo y el switch USAR_IRT
+-----------------------------------------------
+El script calculaba todo por duplicado. La comparación IRT vs crudo se corrió
+una vez y decidió; su resultado no cambia:
+    Correlación del logro del colegio con su SIMCE:
+        grupo            r crudo   r IRT   ganancia
+        2m lenguaje      0.740     0.783   +0.043
+        2m matemática    0.655     0.705   +0.050
+        4b lenguaje      0.701     0.713   +0.012
+        4b matemática    0.760     0.773   +0.013
+    La corrección es SISTEMÁTICA, no ruido: los colegios que aplicaron ensayos
+    fáciles bajan de percentil y los que aplicaron difíciles suben.
+    La dificultad de la batería aplicada explicaba entre 2.4% y 13.4% de la
+    varianza de `mean_logro` entre colegios.
+
+Salió también el ajuste por `mean_dffclt` de los parquet tab_resumen_irt_*:
+bajo IRT era corrección doble, y esos valores salen de un 3PL ajustado por
+separado en cada ensayo, así que no son comparables entre formas (Spearman
+contra la calibración concurrente: 0.94-1.00 en 4b, 0.77 en 2m).
+
+3.4 Los siete switches
+----------------------
+USAR_IRT, AJUSTAR_DIFICULTAD, USAR_LOGRO_ENCOGIDO, INCLUIR_CONTEXTO_APARTE,
+SPEC_ELEGIDA, USAR_SPLINE, RHO_MODO.
+Eran grados de libertad del investigador sobre un test de dos ventanas y cuatro
+grupos. Cada switch que queda en el código es una invitación a re-sintonizar
+sobre el mismo año de prueba.
+
+3.5 Splines en el modelo de dispersión
+--------------------------------------
+La relación nivel -> dispersión NO es monótona en el universo nacional. Por
+deciles de promedio del colegio, 2025:
+    2m matemática:  40 46 49 52 55 57 58 59 60 53
+    4b lenguaje:    51 52 53 53 51 51 50 49 47 44
+    4b matemática:  42 42 44 43 43 43 42 41 40 37
+
+Pero ESTE modelo no puede aprovecharlo. Comparadas out-of-time:
+    dos splines (v8)      5 df   MAE 4.513
+    un spline             3 df   MAE 4.582
+    spline + lineal       4 df   MAE 4.580
+    lineal, dos términos  2 df   MAE 4.482
+    lineal, un término    1 df   MAE 4.463   <- la elegida
+La lineal simple gana en los cuatro grupos. Todas las diferencias caben en 0.12
+sobre una base de 4.5, así que son empates — pero cuando hay empate gana la
+simple.
+
+RECONCILIACIÓN: la curva de deciles se mide sobre ~6.400 colegios de TODO el
+rango nacional; el modelo se entrena sobre 135-215 colegios concentrados en GSE
+alto y particular pagado. En ese rango restringido la relación es efectivamente
+monótona. Si la base Santillana llegara a cubrir el rango completo, habría que
+volver a mirarlo.
+
+También se probó y descartó: GLM gamma y log-link sobre `sd_simce`. La variable
+es casi simétrica (asimetría -0.03 a -0.17) y log(sd) queda sesgada a la
+izquierda (-0.56 a -0.73). MAE prácticamente idéntico.
+
+3.6 La versión A de la predicción individual, y `rho`
+-----------------------------------------------------
+    pred_A = mu + rho * sd * z_ensayo,  con rango p10-p90
+`rho` NO es estimable: haría falta un vínculo alumno-a-alumno entre ensayo y
+SIMCE, que no existe. Salía de reparametrizar un 0.70 elegido a mano en la v4
+(rho_v5 = rho_v4 / sqrt(conf_indice)). Era el número menos defendible del
+pipeline.
+Con él se fueron RHO_MODO, `rho_sugerido`, la varianza residual en dos
+componentes y el análisis de sensibilidad de 04 — que por construcción no podía
+concluir nada: sus dos métricas empujan en direcciones opuestas y la del error
+emparejado favorece rho=1 mecánicamente.
+Queda sólo el matching por percentil, que no tiene parámetros libres.
+
+3.7 Lo que se revisó y se dejó igual
+------------------------------------
+La plantilla `forma_z` por tercil. Las plantillas de tercil bajo y alto
+difieren en 0.06-0.14 z en la mediana y hasta 0.49-0.71 z en las colas. Tiene
+respaldo teórico (efecto piso/techo), es una tabla de consulta y no un modelo,
+y no cuesta grados de libertad.
+También se probó condicionar `forma_z` por GSE dentro de cada tercil: las
+diferencias son de <=0.06 en z (~2 puntos SIMCE). El tercil ya captura lo que
+el GSE aportaría.
+
+
+===============================================================================
+4. TENDENCIA POR COLEGIO — PROBADA Y DESCARTADA
+===============================================================================
+
+Pregunta: ¿se puede agregar un componente que estime la tendencia entre años a
+nivel de colegio?
+
+El panel nacional de SIMCE tiene 2022-2025 (cuatro años), con 5.956 colegios de
+4b y 2.929 de 2m completos. Suficiente para intentarlo.
+
+Diseño: entrenar con 2022-2024, predecir 2025, CENTRANDO dentro de cada año
+(así se saca la deriva común del país, que no es lo que un término de tendencia
+por colegio debe explicar).
+
+    Grupo            Nivel encogido   Nivel + tendencia   Ganancia
+    2m lenguaje          10.6              10.6            +0.06
+    4b lenguaje          13.9              13.9            +0.02
+    2m matemática        12.3              12.2            +0.06
+    4b matemática        13.4              13.3            +0.17
+
+Diagnóstico de por qué: la pendiente OLS cruda de cada colegio tiene sd de 9 a
+12 puntos por año, y lme4 la encoge a sd de 1.2 a 3.2 — un factor de 4 a 8. El
+modelo mismo dice que entre el 85% y el 95% de la variación aparente de
+pendientes es error de muestreo. La correlación entre la pendiente pasada y el
+cambio efectivo en 2025 es de 0.09 a 0.18.
+
+AVISO PRÁCTICO: extrapolar la pendiente SIN encoger es destructivo. El MAE se
+va de 10.6 a 15.9 y de 13.7 a 19.9.
+
+LÍMITE: el panel empieza en 2022 porque el SIMCE se suspendió en pandemia. Con
+tres puntos de entrenamiento por colegio la pendiente es intrínsecamente
+frágil. Si la serie se extiende hacia atrás el test se puede repetir, aunque
+cruzar 2020 mete una discontinuidad propia.
+
+
+===============================================================================
+5. SEXO DEL ALUMNO — PROBADO Y DESCARTADO COMO PREDICTOR
+===============================================================================
+(Implementado en la rama modelo-final, NO en main.)
+
+Insumos: sexo estimado del nombre en el ensayo (paquete `guaguas`, asignación
+cuando >75% de las personas con ese nombre lo tienen), cobertura 99.0%, balance
+49.8/49.2. Sexo administrativo en el SIMCE (columna `sexo`, y `gen_alu` en
+2022), cobertura ~99%.
+
+5.1 La brecha ya viaja dentro del theta
+---------------------------------------
+Se siguió la brecha por todo el pipeline (4b matemática, sd intra-colegio):
+    theta 0.297 -> índice 0.299 -> predicción final 0.287
+Atraviesa intacta. El encogimiento no es diferencial (confiabilidad 0.901 en
+hombres, 0.911 en mujeres). Agregar sexo como predictor sería contar dos veces
+la parte que el ensayo ya mide.
+
+5.2 Lo único que podría aportar: la brecha que falta
+----------------------------------------------------
+    Grupo            Brecha predicha   Brecha observada   Falta
+    2m lenguaje         -11.9              -12.6          -0.7
+    2m matemática        +5.7              +13.3          +7.7
+    4b lenguaje          -2.1               -4.7          -2.5
+    4b matemática       +11.1              +16.4          +5.2
+
+HALLAZGO REAL Y VIGENTE: el modelo SUBESTIMA la ventaja masculina en
+matemática. En lenguaje reproduce la brecha bien. La dirección es la
+conservadora: el modelo es levemente optimista para las niñas en matemática.
+
+5.3 Corregirlo con un desplazamiento
+------------------------------------
+Cota superior (desplazar cada sexo media brecha faltante): ganancia de 0.00,
+0.21, 0.03 y 0.10 puntos sobre errores de 11 a 18.
+
+5.4 Percentil condicional al sexo — el test que importó
+--------------------------------------------------------
+Propuesta más general: calcular la posición DENTRO del sexo y mapearla a una
+distribución desplazada y reescalada para ese sexo (corrige también dispersión
+y forma). La dispersión interna sí difiere algo por sexo: razón H/M de 1.007 a
+1.10 en SIMCE.
+
+    Grupo            En el mismo año   Out-of-time
+    2m lenguaje          +0.18            +0.08
+    2m matemática        +0.44            +0.73
+    4b lenguaje          +0.23            +0.06
+    4b matemática        +0.38            -0.54
+
+En el mismo año parecía servir. Out-of-time se cae, y es NEGATIVA justo donde
+la brecha bruta era mayor: el parámetro no transfiere. Con razón — la brecha
+faltante en 4b matemática va -2.3, +1.7, +3.1 entre 2023, 2024 y 2025.
+
+PLACEBO (cinco sorteos), mismo procedimiento con un grupo ALEATORIO:
+    Grupo            Sexo     Placebo medio   Placebo rango
+    2m lenguaje      +0.08       +1.34         0.97 - 1.88
+    2m matemática    +0.73       +1.78         1.45 - 2.02
+    4b lenguaje      +0.06       +2.00         1.85 - 2.14
+    4b matemática    -0.54       +1.51         1.30 - 1.80
+
+Una moneda al aire gana más que el sexo, en los cuatro grupos.
+
+MECANISMO: re-rankear dentro de CUALQUIER subgrupo hace que la sub-distribución
+predicha vuelva a cubrir todo el rango, igual que la observada. Comparar un
+subconjunto del rango predicho contra el rango completo del observado penaliza
+a la regla agrupada por construcción. La ganancia aparente era del método, no
+de la variable. El sexo queda por debajo del azar porque además arrastra un
+parámetro estimado que no transfiere.
+
+MORALEJA GENERAL: cualquier regla de asignación que re-rankee dentro de
+subgrupos tiene que compararse contra un placebo aleatorio antes de creerle. La
+métrica de cuantiles por subgrupo la favorece mecánicamente.
+
+5.5 Consideración de diseño, si alguna vez se retoma
+-----------------------------------------------------
+El producto son predicciones por estudiante que llegan al colegio. Un ajuste
+por sexo significa que dos estudiantes con idéntico desempeño en el ensayo
+reciben puntajes distintos por su sexo inferido del nombre; en matemática eso
+baja sistemáticamente la predicción de las niñas. Si el colegio usa las
+predicciones para focalizar apoyos, el mecanismo es de profecía autocumplida.
+No es una decisión técnica.
+
+
+===============================================================================
+6. VERSIÓN DE PRODUCCIÓN (v11)
+===============================================================================
+
+Regla única, sin flags: SE USA EL MODELO QUE NO VIO EL AÑO QUE SE PREDICE.
+02 y 02b ajustan dos juegos (validación y producción); 03 elige según si el año
+objetivo tiene SIMCE. 04 termina limpio cuando no hay con qué validar.
+
+PROBADO de punta a punta con un 2026 sintético de una sola forma (banco de
+35-45 ítems en vez de ~240):
+    - Los cinco scripts corren sin error.
+    - 03 elige PRODUCCIÓN y predice 454 colegios.
+    - El índice tolera k = 1 con confiabilidad 0.85-0.93.
+    - Predicciones 2.6 a 4.3 puntos bajo el observado 2025; sin NAs ni valores
+      fuera de rango.
+
+Coeficientes al agregar el último año (producción contra validación):
+    mean_logro_enc      1.02-1.07  contra  1.18-1.38
+    nivel_hist_colegio  0.58-0.88  contra  0.49-0.84
+Estables y con signo correcto. Un coeficiente que salte al agregar el último
+año sería el síntoma de la deriva de la sección 2.5.
+
+RIESGO A VIGILAR con pocas formas: `mean_logro` es el porcentaje del banco del
+año. Con una forma ese banco cambia de composición, y el modelo usa
+`mean_logro_enc` EN NIVELES. 01 imprime el diagnóstico de comparabilidad y
+avisa si el salto supera 3 puntos. Si aparece grande, la spec `C` (centrada) es
+la alternativa a evaluar.
+
+
+===============================================================================
+6b. LAS DOS RUTAS DEL PIPELINE (v13)
+===============================================================================
+
+01 se partió en dos según de qué dependen sus insumos:
+
+  01a_insumos_simce.R    todo lo que depende SÓLO del SIMCE: la
+                         distribución por colegio, el contexto rezagado, el
+                         histórico de nivel y de dispersión, la forma de la
+                         distribución interna, los cortes de tercil.
+
+  01b_insumos_ensayo.R   todo lo que depende de los ensayos del año: el
+                         índice individual, las features por estudiante y
+                         por colegio, el cruce con el SIMCE.
+
+De ahí salen dos rutas:
+
+  RONDA NUEVA (lo habitual)      00 -> 01b -> 03
+  LLEGÓ SIMCE NUEVO              00 -> 01a -> 01b -> 02 -> 02b -> 03 -> 04
+
+DOS DECISIONES DE DISEÑO que hicieron posible el corte:
+
+1. El histórico del colegio se calcula ahora para TODOS los colegios del
+   panel nacional (~9.400) y no sólo para los que tienen ensayo (~200).
+   Ésa era la única razón por la que esa parte dependía de los ensayos.
+   El costo de cómputo adicional es despreciable.
+
+2. 01a no puede saber qué años van a tener ronda, así que precalcula para
+   un HORIZONTE: los años con SIMCE más los 3 siguientes. Si 01b pide un
+   año fuera de rango, se detiene y avisa.
+
+DETALLE QUE HUBO QUE PRESERVAR: los colegios que están en el ensayo pero
+no en el panel nacional (sin SIMCE previo, o RBD que no cruza) recibían en
+el diseño anterior un respaldo específico para la dispersión — la sd
+nacional promedio de los años previos, no el promedio de los contextos.
+01a lo guarda aparte en `respaldo_historico.rds` y 01b aplica la misma
+regla. Sin eso, esos colegios habrían cambiado de valor en silencio.
+
+VERIFICACIÓN. Se guardaron las salidas de la versión anterior y se
+compararon contra las del pipeline partido:
+
+    ind_features        97.766 filas    IDÉNTICO
+    school_features      1.466 filas    IDÉNTICO
+    school_model_data    1.410 filas    IDÉNTICO
+    confiabilidades                     IDÉNTICO
+    simce_alumno     3.274.844 filas    IDÉNTICO
+    simce_dist          58.469 filas    IDÉNTICO
+    descriptivos     los 15 elementos   IDÉNTICOS
+
+Los objetos que ahora cubren más años u más colegios (forma_z,
+cortes_tercil, nivel_historico, contexto_colegio) coinciden con diferencia
+máxima 0 sobre la intersección. Y las métricas finales no se movieron: MAE
+de nivel 9.31 / 12.99 / 8.90 / 9.42, error de cuantiles 10.80 / 15.04 /
+10.03 / 9.73.
+
+GANANCIA. 01a tarda ~6 minutos y corre sólo cuando llega SIMCE nuevo. 01b
+tarda ~36 segundos y es el que corre en cada ronda.
+
+
+===============================================================================
+6c. CALIBRACIÓN INCREMENTAL Y EMPAQUETADO (v14)
+===============================================================================
+
+CALIBRACIÓN INCREMENTAL (00)
+----------------------------
+Cada grupo año x grado x área se calibra por separado, así que rehacer los
+años viejos en cada ronda es tiempo perdido. 00 guarda ahora una HUELLA por
+grupo —nombre, tamaño y fecha de cada archivo de entrada, más los
+parámetros que afectan el ajuste— y sólo recalibra si algo cambió.
+
+El caso que obligó a usar huella y no un simple "ya está calculado": que
+lleguen MÁS ensayos de un año ya calibrado. Saltarse ese grupo habría dado
+una calibración obsoleta sin que nada fallara.
+
+Para forzar todo desde cero: borrar irt_theta.rds. Las huellas se escriben
+al final, después de todas las salidas, para que una corrida interrumpida
+no deje un estado que la siguiente dé por bueno. Un grupo omitido se
+reintenta siempre (la condición de reuso exige que tenga filas en
+irt_theta).
+
+    Escenario                          Recalibrados   Tiempo
+    Primera corrida (sin huellas)         12 de 12    7.1 min
+    Sin cambios                            0 de 12    4 s
+    Un grupo con archivos distintos        1 de 12    16 s
+
+En los tres casos irt_theta (100.233 filas) e irt_items (2.449 filas) salen
+IDÉNTICOS a la calibración completa de referencia.
+
+EMPAQUETADO (carpeta produccion/)
+---------------------------------
+Para que la ruta de predicción la pueda correr un equipo que no usa R:
+
+    PREDECIR.bat            punto de entrada, doble clic
+    CHEQUEAR.bat            sólo valida insumos, sin calcular
+    rutas.txt               las 3 rutas de datos, lo único editable
+    00_validar_insumos.R    11 chequeos con veredicto
+    99_informe_calidad.R    informe HTML con semáforo
+    driver_prediccion.R     orquesta 00 -> 01b -> 03 y arma la entrega
+    comun.R                 funciones compartidas
+    instalar_dependencias.R una sola vez, binarios de Posit
+    COMO_CORRER.md          guía de una página
+    CONTRATO_DE_DATOS.md    nombres de archivo, hojas y columnas
+
+DOS FALLAS QUE ENCONTRÓ EL PROPIO VALIDADOR AL PROBARLO, y que ilustran
+para qué sirve:
+  - Los encabezados de la hoja Matriz traen tildes ("Ítem ID"). Había que
+    normalizarlos con janitor::make_clean_names(), igual que el pipeline.
+  - El aviso de "SIMCE sin usar" marcaba 2022, que no está entre los años
+    de entrenamiento porque no tiene ensayos, no porque falte procesarlo.
+    Ahora sólo cuenta años posteriores al último entrenado.
+
+El driver sincroniza config.yml desde rutas.txt para el usuario de Windows
+actual, editando por líneas para no pisar los perfiles de otras personas.
+Así los scripts del modelo siguen sin modificarse.
+
+CORRIDA COMPLETA MEDIDA: 7.7 minutos (00 7.1 min, 01b 12 s, 03 3 s). Con la
+calibración incremental, una ronda que sólo agrega un año nuevo baja a
+menos de un minuto.
+
+LO QUE NO RESUELVE. El informe da un veredicto, pero los juicios de fondo
+siguen siendo humanos: la deriva entre años (sección 2.5) y la elección
+entre la especificación en niveles y la centrada (sección 2.4) no se
+automatizan. Sobre los datos actuales el veredicto sale AMARILLO, que es lo
+correcto: marca esos dos problemas abiertos.
+
+
+===============================================================================
+7. LO QUE NO SE PUEDE HACER CON ESTOS DATOS
+===============================================================================
+
+7.1 Validar predicción por predicción
+No existe vínculo alumno-a-alumno entre el ensayo Santillana y el SIMCE. Todo
+lo individual se valida a nivel de distribución. Conseguir un cruce, aunque sea
+parcial y anonimizado, es lo que más valor agregaría.
+
+7.2 Comparar niveles de theta entre años
+La calibración concurrente enlaza las formas de un mismo año por PERSONAS
+COMUNES (1.400 a 5.900 alumnos por par). Entre años no hay ese puente: los
+alumnos son otros y los ítems casi no se repiten.
+
+    Solapamiento de item_id entre años:
+        Grado · Área      2023-24   2023-25   2024-25
+        2m lenguaje         40        40        40
+        4b lenguaje         35         0         0
+        2m matemática        0         0         0
+        4b matemática        0         0         0
+    Sobre ~240 ítems por año. Sólo reaparece el Ensayo 1 de lenguaje.
+
+SALVEDAD IMPORTANTE: ese cero puede ser de registro y no real. Los `item_id`
+son códigos de banco (5.6M a 7.4M) fuertemente estratificados por año — 2023
+ocupa 5.62-5.98M, 2024 llega a 6.70M, 2025 a 7.39M — que es el patrón esperable
+si el ID se asigna al CARGAR el ítem y no a su contenido. Con ese esquema un
+ítem reutilizado que se vuelve a subir entra como nuevo.
+El caso del Ensayo 1 muestra que el sistema SÍ puede preservar el ID cuando se
+reutiliza la forma completa, así que las dos hipótesis siguen vivas y estos
+datos no las separan: haría falta el contenido o un identificador estable.
+IMPORTA porque cambia el costo de la solución: si hay solapamiento oculto,
+enlazar los años es un problema de metadatos y no exige rediseñar los ensayos.
+
+7.3 Representatividad
+La base de colegios con ensayo es mayoritariamente particular pagado (57-63%),
+GSE alto y casi sin ruralidad (1-4%). Los coeficientes valen para esa
+población. Por eso los efectos de contexto se estiman en el universo nacional y
+se transfieren, en vez de estimarse acá.
+
+
+===============================================================================
+8. PENDIENTES, EN ORDEN DE VALOR
+===============================================================================
+
+1. Corregir la deriva entre años (sección 2.5), que es la mitad del error
+   actual. La corrección propuesta tiene dos mitades: centrar el logro dentro
+   del año (la spec `C`, ya implementada) y anclar el nivel del año a la serie
+   nacional del SIMCE (no implementado). Para predecir un año futuro habría que
+   proyectar ese nivel o asumir el del último año conocido.
+
+2. Pedir a Santillana un identificador estable de ítem, o el contenido, para
+   resolver la ambigüedad de 7.2.
+
+3. Enlazar la escala IRT entre años donde sí hay ancla verificada: Ensayo 1 de
+   lenguaje, 2° medio, los tres años.
+
+4. Conseguir un cruce alumno-a-alumno, aunque sea parcial (7.1).
+
+5. Reducir el error del modelo de COLEGIO, que es donde está el grueso: entre
+   53% y 63% del error total. El oráculo con media y sd observadas baja el
+   error de cuantiles de 9.7-15.1 a 3.7-5.6.
+
+
+===============================================================================
+9. MÉTRICAS DE REFERENCIA (última corrida sobre 2025 como año de prueba)
+===============================================================================
+
+Nivel del colegio (02):
+    Grupo            MAE     Sesgo    R²
+    2m lenguaje      9.31    +4.82   0.766
+    2m matemática   12.99    +0.47   0.857
+    4b lenguaje      8.90    +5.33   0.622
+    4b matemática    9.42    +5.91   0.689
+    MAE medio 10.15; sesgo medio +4.13.
+
+Dispersión interna (02b):
+    Grupo            MAE     R²      vs constante   vs histórico
+    2m lenguaje      5.39   0.233      11.9%          11.0%
+    2m matemática    5.61   0.318      18.1%           8.3%
+    4b lenguaje      3.63   0.318      26.6%          19.7%
+    4b matemática    3.22   0.305      24.2%          16.0%
+
+Distribución individual (04), error de cuantiles:
+    Grupo            Modelo   Sólo la media   Oráculo
+    2m lenguaje      10.80        31.90        4.21
+    2m matemática    15.04        42.36        5.56
+    4b lenguaje      10.03        36.02        4.69
+    4b matemática     9.73        29.31        3.71
+
+Composición por Nivel de Aprendizaje: error absoluto medio de 1.9 a 2.7 puntos
+porcentuales.
+
+Coherencia: razón entre la sd de las predicciones y la sd predicha del colegio,
+0.989 a 0.992 (objetivo 1). La versión v2 legado daba 0.23 a 0.51.
+
+===============================================================================
+FIN
+===============================================================================
