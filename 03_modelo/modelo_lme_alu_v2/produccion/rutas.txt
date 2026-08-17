@@ -1,0 +1,23 @@
+# =============================================================
+# RUTAS DE DATOS
+# -------------------------------------------------------------
+# Es el unico archivo que hay que editar para correr el modelo.
+#
+# Escriba la ruta completa de cada carpeta despues del signo =.
+# Use barras normales /  (no barras invertidas \).
+# No agregue comillas.
+#
+# Ejemplo:
+#   data_in = C:/Users/juan/OneDrive/modelo-simce-datos/data_in
+# =============================================================
+
+# Carpeta con los archivos ORIGINALES: los Excel de los ensayos
+# Santillana y los zip de resultados SIMCE.
+data_in = C:/Users/Usuario/OneDrive/modelo-simce-datos/data_in
+
+# Carpeta con los archivos YA PROCESADOS (los .parquet). La generan los
+# scripts de 01_preparar_datos.
+data_intermedia = C:/Users/Usuario/OneDrive/modelo-simce-datos/data_intermedia
+
+# Carpeta donde se van a escribir los resultados.
+data_out = C:/Users/Usuario/OneDrive/modelo-simce-datos/data_out
