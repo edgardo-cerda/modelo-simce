@@ -517,7 +517,7 @@ irt_theta).
 En los tres casos irt_theta (100.233 filas) e irt_items (2.449 filas) salen
 IDÉNTICOS a la calibración completa de referencia.
 
-EMPAQUETADO (carpeta 05_estimacion_final/)
+EMPAQUETADO (carpeta 05_ejecutar_modelo/)
 ------------------------------------------
 Para que la ruta de predicción la pueda correr un equipo que no usa R:
 
