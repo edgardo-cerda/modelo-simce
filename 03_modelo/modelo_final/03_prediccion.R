@@ -77,7 +77,7 @@ library(tidyverse)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+dir_salidas <- ruta_outputs %>% file.path('modelo_final')
 
 # ---- 1. Insumos ---------------------------------------------------
 # Cada script del pipeline guarda todo lo suyo en una sola lista.

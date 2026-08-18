@@ -44,7 +44,7 @@ library(tidyverse)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+dir_salidas <- ruta_outputs %>% file.path('modelo_final')
 
 MIN_ALU_VALID <- 15
 QS <- seq(0.05, 0.95, by = 0.05)

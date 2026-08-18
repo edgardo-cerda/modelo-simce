@@ -34,7 +34,7 @@ library(htmltools)
 ruta_figuras <- tryCatch({
   usuario <- Sys.info()[["user"]]
   rutas   <- config::get(config = usuario, file = "config.yml")
-  file.path(rutas$ruta_outputs, "modelo_lme_alu_v2", "figuras_presentacion.rds")
+  file.path(rutas$ruta_outputs, "modelo_final", "figuras_presentacion.rds")
 }, error = function(e) "figuras_presentacion.rds")
 
 figuras <- if (file.exists(ruta_figuras)) readRDS(ruta_figuras) else NULL

@@ -43,11 +43,11 @@ library(plotly)
 usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+dir_salidas <- ruta_outputs %>% file.path('modelo_final')
 
 # Modelo anterior (sin IRT) y regla de conversión externa ("modelo 1"):
 # insumos del escenario 2 y 3 en las comparaciones de resultados. El
-# escenario 1 (este script) siempre es "modelo final" = modelo_lme_alu_v2.
+# escenario 1 (este script) siempre es "modelo final" = modelo_final.
 dir_salidas_anterior <- ruta_outputs %>% file.path('modelo_lme_alu')
 ruta_consolidado_ensayos <- rutas$ruta_data_intermedia %>%
   file.path('ensayo_santillana', 'consolidado_ensayo_santillana.parquet')

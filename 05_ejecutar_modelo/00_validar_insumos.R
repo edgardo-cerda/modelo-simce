@@ -78,7 +78,7 @@ if (is.null(rutas) || !all(c("data_in", "data_intermedia", "data_out") %in% name
   if (!exists("EJECUTADO_POR_MASTER")) quit(save = "no", status = 1)
 }
 
-dir_salidas <- file.path(rutas[["data_out"]], "modelo_lme_alu_v2")
+dir_salidas <- file.path(rutas[["data_out"]], "modelo_final")
 
 # ---- 3. Archivos de ensayo -------------------------------------------
 carpeta_ensayos <- file.path(rutas[["data_in"]], "ensayos_santillana")

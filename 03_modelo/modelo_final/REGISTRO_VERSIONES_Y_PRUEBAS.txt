@@ -1,5 +1,5 @@
 ===============================================================================
-REGISTRO DE VERSIONES Y PRUEBAS — modelo_lme_alu_v2
+REGISTRO DE VERSIONES Y PRUEBAS — modelo_final
 ===============================================================================
 
 Qué es este archivo

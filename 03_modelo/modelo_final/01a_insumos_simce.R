@@ -71,7 +71,7 @@ rutas <- config::get(config = usuario, file = "config.yml")
 ruta_data_intermedia <- rutas$ruta_data_intermedia
 ruta_outputs <- rutas$ruta_outputs
 
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+dir_salidas <- ruta_outputs %>% file.path('modelo_final')
 dir_salidas %>% dir.create(showWarnings = FALSE, recursive = TRUE)
 
 # Parámetros -------------------------------------------------------

@@ -39,7 +39,7 @@ Toma varios minutos y sólo se hace una vez. Al final debe decir `Todo listo`.
 
 ## Dónde quedan los resultados
 
-En la carpeta de salidas, dentro de `modelo_lme_alu_v2/entregas/<año>/`:
+En la carpeta de salidas, dentro de `modelo_final/entregas/<año>/`:
 
 | Archivo | Qué es |
 |---|---|
@@ -74,19 +74,19 @@ La re-estimación corre, **en este orden**, desde la carpeta del proyecto:
 ```
 Rscript 01_preparar_datos/01_cargar_y_consolidar_simce.R
 Rscript 01_preparar_datos/04_limpieza_errores_y_outliers_simce.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/00_calibracion_irt.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/01a_insumos_simce.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/01b_insumos_ensayo.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/02a_estimacion_nivel.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/02b_estimacion_dispersion.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/02c_estimacion_posicion.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/03_prediccion.R
-Rscript 03_estimacion_modelo/modelo_lme_alu_v2/04_validacion.R
+Rscript 03_modelo/modelo_final/00_calibracion_irt.R
+Rscript 03_modelo/modelo_final/01a_insumos_simce.R
+Rscript 03_modelo/modelo_final/01b_insumos_ensayo.R
+Rscript 03_modelo/modelo_final/02a_estimacion_nivel.R
+Rscript 03_modelo/modelo_final/02b_estimacion_dispersion.R
+Rscript 03_modelo/modelo_final/02c_estimacion_posicion.R
+Rscript 03_modelo/modelo_final/03_prediccion.R
+Rscript 03_modelo/modelo_final/04_validacion.R
 ```
 
 Toma bastante más que predecir: `01a` solo son unos 6 minutos, y `00` varios más.
 
-**Conviene que la haga alguien que conozca el modelo.** No es sólo apretar play: es el momento de revisar si las métricas de precisión se movieron, si los coeficientes se mantienen estables al incorporar el año nuevo, y si las decisiones que quedaron abiertas siguen siendo válidas. Los criterios están en `REGISTRO_VERSIONES_Y_PRUEBAS.txt`, dentro de `03_estimacion_modelo/modelo_lme_alu_v2/`.
+**Conviene que la haga alguien que conozca el modelo.** No es sólo apretar play: es el momento de revisar si las métricas de precisión se movieron, si los coeficientes se mantienen estables al incorporar el año nuevo, y si las decisiones que quedaron abiertas siguen siendo válidas. Los criterios están en `REGISTRO_VERSIONES_Y_PRUEBAS.txt`, dentro de `03_modelo/modelo_final/`.
 
 ---
 

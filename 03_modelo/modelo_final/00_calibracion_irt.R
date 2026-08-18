@@ -68,7 +68,7 @@
 #
 # -------------------------------------------------------------
 # SALIDA: un único archivo `salida_00_irt.rds` (en
-# <ruta_outputs>/modelo_lme_alu_v2/) con una lista de seis tablas más las
+# <ruta_outputs>/modelo_final/) con una lista de seis tablas más las
 # huellas de control:
 #
 #   $theta     1 fila por estudiante x año x grado x área, con `theta`
@@ -98,7 +98,7 @@ rutas <- config::get(config = usuario, file = "config.yml")
 ruta_data_in <- rutas$ruta_data_in
 ruta_outputs <- rutas$ruta_outputs
 
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+dir_salidas <- ruta_outputs %>% file.path('modelo_final')
 dir_salidas %>% dir.create(showWarnings = FALSE, recursive = TRUE)
 
 # Parámetros -------------------------------------------------------

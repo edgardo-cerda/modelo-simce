@@ -13,7 +13,7 @@
 # niveles. Contar niveles ata este script a la estructura del repositorio y
 # se rompe en silencio apenas alguien mueve o renombra una carpeta, que es
 # exactamente lo que pasó cuando la carpeta de producción se sacó de
-# 03_.../modelo_lme_alu_v2/ y quedó en la raíz.
+# 03_modelo/ y quedó en la raíz.
 raiz_proyecto <- function(dir_inicio) {
   d <- normalizePath(dir_inicio, mustWork = TRUE)
   for (i in 1:8) {

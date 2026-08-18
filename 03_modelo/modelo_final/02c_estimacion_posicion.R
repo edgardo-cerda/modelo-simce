@@ -52,7 +52,7 @@ usuario <- Sys.info()[["user"]]
 rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
 
-dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
+dir_salidas <- ruta_outputs %>% file.path('modelo_final')
 
 # Mínimo de estudiantes para estimar la varianza verdadera entre alumnos
 # DENTRO de un colegio. Bajo este umbral se usa la del grupo completo.

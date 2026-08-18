@@ -56,7 +56,7 @@ cat("config.yml para el usuario '", usuario, "': ", estado_cfg, "\n\n", sep = ""
 
 setwd(dir_raiz)
 
-dir_salidas <- file.path(rutas[["data_out"]], "modelo_lme_alu_v2")
+dir_salidas <- file.path(rutas[["data_out"]], "modelo_final")
 
 # ---- 2. Chequeo de insumos ------------------------------------------
 EJECUTADO_POR_MASTER <- TRUE
