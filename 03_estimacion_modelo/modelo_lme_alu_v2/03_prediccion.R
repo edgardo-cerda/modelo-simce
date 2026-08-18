@@ -1,7 +1,7 @@
 # =============================================================
-# 03_prediccion_nueva_ronda.R
+# 03_prediccion.R
 # -------------------------------------------------------------
-# Aplica los modelos de 02 (nivel) y 02b (dispersión) para predecir
+# Aplica los modelos de 02a (nivel) y 02b (dispersión) para predecir
 # la "próxima ronda" a nivel de colegio y de estudiante.
 #
 # La predicción individual se construye en dos piezas separadas, cada
@@ -38,7 +38,7 @@
 #
 # La predicción no puede validarse estudiante por estudiante —no existe
 # vínculo alumno-a-alumno entre el ensayo y el SIMCE— pero sí a nivel de
-# distribución: ver 04_validacion_individual.R.
+# distribución: ver 04_validacion.R.
 #
 # -------------------------------------------------------------
 # CÓMO SE CORRE UNA RONDA NUEVA
@@ -80,12 +80,36 @@ ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 
 # ---- 1. Insumos ---------------------------------------------------
-ind_features    <- dir_salidas %>% file.path("ind_features.rds") %>% readRDS()
-school_features <- dir_salidas %>% file.path("school_features.rds") %>% readRDS()
-forma_z         <- dir_salidas %>% file.path("forma_z.rds") %>% readRDS()
-cortes_tercil   <- dir_salidas %>% file.path("cortes_tercil.rds") %>% readRDS()
-limites_simce   <- dir_salidas %>% file.path("limites_simce.rds") %>% readRDS()
-anios_cerrados  <- dir_salidas %>% file.path("anios_cerrados.rds") %>% readRDS()
+# Cada script del pipeline guarda todo lo suyo en una sola lista.
+leer_salida <- function(archivo, de) {
+  ruta <- dir_salidas %>% file.path(archivo)
+  if (!file.exists(ruta)) {
+    stop("Falta ", archivo, " en ", dir_salidas, ".
+",
+         "Lo genera ", de, ": hay que correrlo antes.")
+  }
+  readRDS(ruta)
+}
+
+# Los tres componentes del modelo, uno por archivo, más los insumos.
+simce      <- leer_salida("salida_01a_simce.rds",         "01a_insumos_simce.R")
+ensayo     <- leer_salida("salida_01b_ensayo.rds",        "01b_insumos_ensayo.R")
+nivel      <- leer_salida("salida_02a_nivel.rds",         "02a_estimacion_nivel.R")
+dispersion <- leer_salida("salida_02b_dispersion.rds",    "02b_estimacion_dispersion.R")
+posicion   <- leer_salida("salida_02c_posicion.rds",      "02c_estimacion_posicion.R")
+
+# `ind_features` trae la medida del ensayo por estudiante; `posicion$posicion`
+# trae dónde queda ese estudiante dentro de su colegio. Se juntan acá porque
+# la predicción individual necesita las dos cosas.
+ind_features <- ensayo$ind_features %>%
+  left_join(posicion$posicion,
+            by = c("agno", "grado", "area", "rbd_revisado", "id_usuario_curso"))
+
+school_features <- ensayo$school_features
+forma_z         <- posicion$forma_z
+cortes_tercil   <- posicion$cortes_tercil
+limites_simce   <- simce$limites_simce
+anios_cerrados  <- nivel$anios_cerrados
 
 anio_prediccion <- max(school_features$agno)
 
@@ -108,15 +132,15 @@ anio_prediccion <- max(school_features$agno)
 es_ronda_nueva <- !(anio_prediccion %in% anios_cerrados)
 
 if (es_ronda_nueva) {
-  modelos    <- dir_salidas %>% file.path("modelos_escolares_produccion.rds") %>% readRDS()
-  modelos_sd <- dir_salidas %>% file.path("modelos_dispersion_produccion.rds") %>% readRDS()
-  limites_sd <- dir_salidas %>% file.path("limites_dispersion_produccion.rds") %>% readRDS()
+  modelos    <- nivel$modelos_produccion
+  modelos_sd <- dispersion$modelos_produccion
+  limites_sd <- dispersion$limites_produccion
   modo <- "PRODUCCIÓN"
   detalle <- paste("entrenados con", paste(anios_cerrados, collapse = ", "))
 } else {
-  modelos    <- dir_salidas %>% file.path("modelos_escolares.rds") %>% readRDS()
-  modelos_sd <- dir_salidas %>% file.path("modelos_dispersion.rds") %>% readRDS()
-  limites_sd <- dir_salidas %>% file.path("limites_dispersion.rds") %>% readRDS()
+  modelos    <- nivel$modelos
+  modelos_sd <- dispersion$modelos
+  limites_sd <- dispersion$limites
   modo <- "VALIDACIÓN"
   detalle <- paste("entrenados excluyendo", anio_prediccion)
 }
@@ -301,13 +325,18 @@ salida_individual <- pred_individual %>%
          pred_B)
 
 write_csv(salida_individual, dir_salidas %>% file.path("predicciones_individual.csv"))
-saveRDS(pred_individual, dir_salidas %>% file.path("predicciones_individual.rds"))
-saveRDS(pred_colegio,    dir_salidas %>% file.path("predicciones_colegio.rds"))
-write_csv(chequeo, dir_salidas %>% file.path("chequeo_coherencia.csv"))
+
+salida_prediccion <- list(
+  colegio    = pred_colegio,     # 1 fila por colegio, con media y ancho
+  individual = pred_individual,  # 1 fila por estudiante
+  chequeo    = chequeo           # coherencia del reparto, por colegio
+)
+
+saveRDS(salida_prediccion, dir_salidas %>% file.path("salida_03_prediccion.rds"))
 
 cat("Listo. Archivos generados en ", dir_salidas, ":\n",
     " - predicciones_colegio.csv    (media y ancho predichos por colegio)\n",
     " - predicciones_individual.csv (predicción por estudiante)\n",
     " - chequeo_coherencia.csv\n",
-    "\nSiguiente paso: 04_validacion_individual.R\n")
+    "\nSiguiente paso: 04_validacion.R\n")
 

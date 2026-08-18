@@ -1,10 +1,18 @@
 # =============================================================
-# driver_prediccion.R
+# master_prediccion.R
 # -------------------------------------------------------------
 # Corre la ruta de PREDICCIÓN de punta a punta:
 #
-#     chequeo de insumos -> 00 (IRT) -> 01b (insumos) -> 03 (predicción)
-#                        -> informe de calidad -> carpeta de entrega
+#     chequeo de insumos
+#       -> 00  calibración IRT de los ensayos
+#       -> 01b insumos del ensayo
+#       -> 02c estimación de la POSICIÓN del estudiante
+#       -> 03  predicción
+#       -> carpeta de entrega
+#
+# Los otros dos componentes —NIVEL (02a) y DISPERSIÓN (02b)— no corren acá:
+# sus coeficientes ya están ajustados y se reutilizan. La posición sí se
+# recalcula, porque depende de qué alumnos rindieron los ensayos del año.
 #
 # No re-estima el modelo: usa los coeficientes ya ajustados. Si llegó un
 # SIMCE nuevo hay que correr antes la ruta de re-estimación, que está
@@ -23,7 +31,7 @@ dir_produccion <- DIR_PRODUCCION
 source(file.path(dir_produccion, "comun.R"))
 
 dir_raiz    <- raiz_proyecto(dir_produccion)
-dir_modelo  <- file.path(dir_raiz, "03_modelo", "modelo_lme_alu_v2")
+dir_modelo  <- carpeta_modelo(dir_raiz)
 rscript     <- file.path(R.home("bin"), if (.Platform$OS.type == "windows") "Rscript.exe" else "Rscript")
 
 t_inicio <- Sys.time()
@@ -32,12 +40,13 @@ cat("=============================================================\n")
 cat("PREDICCIÓN DE RESULTADOS SIMCE\n")
 cat("=============================================================\n")
 cat("Inicio:", format(t_inicio, "%Y-%m-%d %H:%M:%S"), "\n")
-cat("Proyecto:", dir_raiz, "\n\n")
+cat("Proyecto:", dir_raiz, "\n")
+cat("Scripts del modelo:", dir_modelo, "\n\n")
 
 # ---- 1. Configuración -----------------------------------------------
 # Los scripts del modelo leen sus rutas de config.yml (indexado por
 # usuario de Windows) y lo hacen con ruta RELATIVA, así que hay que
-# pararse en la raíz del proyecto. El driver sincroniza ese archivo desde
+# pararse en la raíz del proyecto. El master sincroniza ese archivo desde
 # rutas.txt para que nadie tenga que editar un YAML.
 rutas <- leer_rutas(file.path(dir_produccion, "rutas.txt"))
 usuario <- Sys.info()[["user"]]
@@ -50,7 +59,7 @@ setwd(dir_raiz)
 dir_salidas <- file.path(rutas[["data_out"]], "modelo_lme_alu_v2")
 
 # ---- 2. Chequeo de insumos ------------------------------------------
-EJECUTADO_POR_DRIVER <- TRUE
+EJECUTADO_POR_MASTER <- TRUE
 source(file.path(dir_produccion, "00_validar_insumos.R"), local = FALSE)
 
 if (!validacion_ok) {
@@ -66,10 +75,11 @@ dir.create(dir_entrega, recursive = TRUE, showWarnings = FALSE)
 archivo_log <- file.path(dir_entrega, "log_corrida.txt")
 
 pasos <- data.frame(
-  script = c("00_irt_calibracion.R", "01b_insumos_ensayo.R",
-             "03_prediccion_nueva_ronda.R"),
+  script = c("00_calibracion_irt.R", "01b_insumos_ensayo.R",
+             "02c_estimacion_posicion.R", "03_prediccion.R"),
   titulo = c("Calibración IRT de los ensayos",
              "Construcción de insumos del ensayo",
+             "Estimación de la posición del estudiante",
              "Predicción por colegio y por estudiante"),
   stringsAsFactors = FALSE
 )
@@ -114,15 +124,7 @@ for (i in seq_len(nrow(pasos))) {
       else sprintf("%.1f min\n", tiempos[i] / 60))
 }
 
-# ---- 4. Informe de calidad ------------------------------------------
-cat("\n[informe] Generando el informe de calidad...\n")
-INFORME_DIR_SALIDAS <- dir_salidas
-INFORME_ANIO        <- anio_objetivo
-INFORME_DESTINO     <- file.path(dir_entrega, "informe_calidad.html")
-INFORME_TIEMPOS     <- setNames(tiempos, pasos$script)
-source(file.path(dir_produccion, "99_informe_calidad.R"), local = FALSE)
-
-# ---- 5. Carpeta de entrega ------------------------------------------
+# ---- 4. Carpeta de entrega ------------------------------------------
 entregables <- c("predicciones_colegio.csv", "predicciones_individual.csv")
 copiados <- file.copy(file.path(dir_salidas, entregables),
                       file.path(dir_entrega, entregables), overwrite = TRUE)
@@ -133,17 +135,15 @@ cat("\n=============================================================\n")
 cat("LISTO. Tiempo total:", sprintf("%.1f minutos", t_total), "\n")
 cat("=============================================================\n\n")
 cat("La entrega quedó en:\n  ", dir_entrega, "\n\n")
-cat("  informe_calidad.html        <- ABRA ESTO PRIMERO\n")
 cat("  predicciones_colegio.csv     una fila por colegio\n")
 cat("  predicciones_individual.csv  una fila por estudiante\n")
 cat("  log_corrida.txt              detalle técnico de la corrida\n\n")
+cat("Antes de entregar, revise log_corrida.txt: 01b imprime la\n")
+cat("comparabilidad del banco de ítems entre años y avisa si el nivel\n")
+cat("implícito se corrió respecto de años anteriores.\n\n")
 
 if (!all(copiados)) {
   cat("AVISO: no se pudieron copiar todos los archivos a la carpeta de\n")
   cat("entrega. Están igual en", dir_salidas, "\n\n")
 }
 
-# Abrir el informe en el navegador.
-tryCatch(utils::browseURL(INFORME_DESTINO), error = function(e) {
-  cat("No se pudo abrir el informe solo. Ábralo a mano desde la ruta de arriba.\n")
-})

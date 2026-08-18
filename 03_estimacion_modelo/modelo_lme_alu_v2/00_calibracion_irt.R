@@ -1,10 +1,10 @@
 # =============================================================
-# 00_irt_calibracion.R
+# 00_calibracion_irt.R
 # -------------------------------------------------------------
 # Calibración IRT concurrente de los ensayos Santillana.
 #
 # CORRE ANTES QUE 01. Lee los Excel crudos ítem por ítem y produce,
-# para cada estudiante, una habilidad estimada (theta) que SÍ es
+# para cada estudiante, una habilidad estimada (theta) que es
 # comparable entre ensayos del mismo año, grado y área.
 #
 # -------------------------------------------------------------
@@ -17,7 +17,7 @@
 # de los seis ensayos, parte de lo que hoy parece "este colegio rinde
 # más" es en realidad "este colegio aplicó los ensayos fáciles". Medido
 # sobre 2025, la dificultad media de la batería que aplicó cada colegio
-# explica entre 2.4% y 13.4% de la varianza de `mean_logro` ENTRE
+# explica entre 2.4% y 13.4% de la varianza de porcentaje de logro promedio ENTRE
 # colegios, que es el predictor principal del modelo de 02.
 #
 # -------------------------------------------------------------
@@ -66,38 +66,25 @@
 # DENTRO de un año, no para comparar niveles entre años. La deriva de
 # escala entre años que 02 marca como pendiente sigue abierta.
 #
-# SALVEDAD sobre ese cero, que conviene tener presente antes de concluir
-# que las formas son enteramente nuevas cada año: puede ser un artefacto
-# del identificador. Los `item_id` son códigos de banco (5.6M a 7.4M) y
-# están fuertemente estratificados por año — 2023 ocupa 5.62-5.98M, 2024
-# llega hasta 6.70M, 2025 hasta 7.39M — que es el patrón esperable si el
-# ID se asigna al CARGAR el ítem y no a su contenido. Con ese esquema, un
-# ítem reutilizado que se vuelve a subir entra como ítem nuevo y su ancla
-# se pierde en el registro, no en el diseño.
-#
-# El caso del Ensayo 1 de lenguaje muestra que el sistema SÍ puede
-# preservar el ID cuando se reutiliza la forma completa, así que las dos
-# hipótesis siguen vivas y estos datos no las separan: haría falta el
-# contenido del ítem o un identificador estable. La distinción importa
-# porque cambia el costo de la solución — si hay solapamiento real
-# oculto, enlazar los años es un problema de metadatos y no exige
-# rediseñar los ensayos.
-#
 # -------------------------------------------------------------
-# SALIDAS (en <ruta_outputs>/modelo_lme_alu_v2/)
-#   - irt_theta.rds      : 1 fila por estudiante x año x grado x área.
-#                          `theta` (EAP) y `se_theta`. Es el insumo que
-#                          reemplaza a `porcentaje_logro` en 01.
-#   - irt_items.rds      : parámetros a y b por ítem, con su forma.
-#   - irt_formas.rds     : dificultad media de cada forma en escala
-#                          theta, junto al logro medio observado. Es la
-#                          tabla que muestra cuánto se corrige.
-#   - irt_linking.rds    : personas comunes por par de formas y
-#                          conectividad del diseño.
-#   - irt_ajuste.csv     : resumen de la calibración por grupo.
+# SALIDA: un único archivo `salida_00_irt.rds` (en
+# <ruta_outputs>/modelo_lme_alu_v2/) con una lista de seis tablas más las
+# huellas de control:
 #
-# Nota: son 12 calibraciones sobre matrices de ~12.000 x 240; toma
-# bastantes minutos.
+#   $theta     1 fila por estudiante x año x grado x área, con `theta`
+#              (EAP) y `se_theta`. Es el insumo que reemplaza a
+#              `porcentaje_logro` en 01b.
+#   $items     parámetros a y b por ítem, con su forma.
+#   $formas    dificultad media de cada forma en escala theta, junto al
+#              logro medio observado. Muestra cuánto se corrige.
+#   $linking   personas comunes por par de formas y conectividad.
+#   $ajuste    resumen de la calibración por grupo (convergencia, ciclos).
+#   $omitidos  grupos que no se pudieron calibrar y por qué.
+#   $huellas   qué archivos generaron cada grupo, para la calibración
+#              incremental (ver sección 3b).
+#
+# Nota: son 12 calibraciones sobre matrices de ~12.000 x 240. La primera
+# corrida toma varios minutos; las siguientes reusan lo que no cambió.
 # =============================================================
 
 library(tidyverse)
@@ -127,8 +114,7 @@ MODELO_IRT <- "2PL"          # "Rasch" | "2PL" | "3PL"
 # Las respuestas vienen como A/B/C/D o "-" (omitida). En la fuente el
 # porcentaje de logro cuenta la omisión como incorrecta, así que el
 # default mantiene esa convención y theta queda comparable con el logro.
-# "faltante" la trata como no respondida (se ignora en la verosimilitud),
-# que es defendible si se cree que omitir es no llegar a la pregunta.
+# "faltante" la trata como no respondida (se ignora en la verosimilitud)
 OMITIDAS_COMO <- "incorrecta"   # "incorrecta" | "faltante"
 
 # Dos formas se consideran enlazadas si comparten al menos esta cantidad
@@ -184,10 +170,7 @@ print(inventario %>% count(agno, grado, area, name = "n_formas") %>%
 
 # ---- 2. Lectura y puntuación de un archivo ------------------------
 # Devuelve una fila por estudiante x ítem, con `correcto` en 0/1/NA.
-# La llave de persona es `id_usuario_curso`, NUNCA el nombre: hay
-# homónimos, y es justamente lo que rompe el pipeline IRT de `_targets.R`
-# (el pivot_wider por nombre genera list-cols y el unlist posterior
-# devuelve un vector más largo que la tabla).
+# La llave de persona es `id_usuario_curso`, NO el nombre (hay homónimos).
 # La clave se normaliza a las letras aceptadas, en mayúscula y sin
 # separadores: "B, C" queda "BC". Un ítem con DOS alternativas correctas no
 # es un error de la planilla: es la práctica estándar cuando, después de
@@ -309,8 +292,7 @@ componentes_conexas <- function(formas, pares_enlazados) {
 # ---- 3b. Calibración incremental -----------------------------------
 # Cada grupo (año x grado x área) se calibra por separado y es
 # independiente de los demás, así que no tiene sentido rehacer los años
-# viejos cada vez que llega una ronda nueva: son decenas de minutos para
-# obtener exactamente el mismo resultado.
+# viejos cada vez que llega una ronda nueva.
 #
 # QUÉ DISPARA UNA RECALIBRACIÓN. No basta con "ya está calculado": el caso
 # habitual es que lleguen MÁS ensayos de un año que ya se calibró, y ahí
@@ -319,11 +301,9 @@ componentes_conexas <- function(formas, pares_enlazados) {
 # —nombre, tamaño y fecha de modificación— junto con los parámetros que
 # afectan el ajuste. Si algo de eso cambió, el grupo se recalibra.
 #
-# PARA FORZAR UNA RECALIBRACIÓN COMPLETA: borrar irt_theta.rds. Al no
+# PARA FORZAR UNA RECALIBRACIÓN COMPLETA: borrar salida_00_irt.rds. Al no
 # encontrar la salida anterior, el script rehace todo.
-ruta_theta   <- dir_salidas %>% file.path("irt_theta.rds")
-ruta_items   <- dir_salidas %>% file.path("irt_items.rds")
-ruta_huellas <- dir_salidas %>% file.path("irt_huellas.rds")
+RUTA_SALIDA <- dir_salidas %>% file.path("salida_00_irt.rds")
 
 # Los parámetros entran en la huella: cambiar el tipo de modelo o cómo se
 # tratan las omitidas invalida lo calculado aunque los Excel sean idénticos.
@@ -341,22 +321,9 @@ huella_grupo <- function(rutas_archivos) {
   )
 }
 
-hay_previo <- all(file.exists(c(ruta_theta, ruta_items, ruta_huellas)))
-huellas_previas <- if (hay_previo) readRDS(ruta_huellas) else list()
-
-# Salidas anteriores, para conservar los grupos que no cambiaron.
-leer_previo <- function(nombre) {
-  r <- dir_salidas %>% file.path(nombre)
-  if (hay_previo && file.exists(r)) readRDS(r) else NULL
-}
-previo <- list(
-  theta   = leer_previo("irt_theta.rds"),
-  items   = leer_previo("irt_items.rds"),
-  formas  = leer_previo("irt_formas.rds"),
-  linking = leer_previo("irt_linking.rds"),
-  ajuste  = leer_previo("irt_ajuste_grupos.rds"),
-  omitidos = leer_previo("irt_omitidos.rds")
-)
+previo <- if (file.exists(RUTA_SALIDA)) readRDS(RUTA_SALIDA) else NULL
+hay_previo <- !is.null(previo) && !is.null(previo$huellas) && !is.null(previo$theta)
+huellas_previas <- if (hay_previo) previo$huellas else list()
 
 if (hay_previo) {
   cat("\nSe encontró una calibración anterior:", length(huellas_previas),
@@ -381,14 +348,6 @@ huellas_nuevas  <- list()   # se guarda al final, con lo reusado y lo nuevo
 grupos_reusados <- character(0)
 
 # Comprobación previa: ¿se pueden abrir y usar todos los archivos del grupo?
-# Los Excel viven en OneDrive y a veces quedan tomados por Excel o por el
-# propio sincronizador ("Permission denied"); y alguna planilla puede venir
-# con la hoja Matriz mal formada. Conviene detectarlo ANTES de leer nada, por
-# dos razones: una calibración concurrente a la que le falta una forma no es
-# una calibración incompleta sino una MAL ESCALADA (la forma ausente deja de
-# aportar su enlace), y una corrida de 12 grupos no debería perderse entera —
-# ni descubrir el problema tras 20 minutos de lectura— por un archivo. Se
-# omite el grupo completo, nunca una forma suelta.
 
 for (i in seq_len(nrow(grupos))) {
 
@@ -628,6 +587,12 @@ for (i in seq_len(nrow(grupos))) {
 # Excel de un año, sus resultados salen también.
 recuperar <- function(prev) {
   if (is.null(prev) || length(grupos_reusados) == 0) return(NULL)
+  # Una tabla vacía de la corrida anterior —el caso normal de `omitidos`
+  # cuando no falló ningún grupo— llega sin columnas, así que ni siquiera
+  # se puede filtrar por la llave. No hay nada que recuperar de ella.
+  if (nrow(prev) == 0 || !all(c("agno", "grado", "area") %in% names(prev))) {
+    return(NULL)
+  }
   prev %>% filter(paste(agno, grado, area, sep = "_") %in% grupos_reusados)
 }
 
@@ -728,36 +693,25 @@ print(
 )
 
 # ---- 7. Guardar -----------------------------------------------------
-saveRDS(irt_theta,   dir_salidas %>% file.path("irt_theta.rds"))
-saveRDS(irt_items,   dir_salidas %>% file.path("irt_items.rds"))
-saveRDS(irt_formas,  dir_salidas %>% file.path("irt_formas.rds"))
-saveRDS(irt_linking, dir_salidas %>% file.path("irt_linking.rds"))
-# En RDS además del CSV: la calibración incremental lo lee de vuelta para
-# conservar la fila de los grupos que no se recalculan.
-saveRDS(irt_ajuste,  dir_salidas %>% file.path("irt_ajuste_grupos.rds"))
-write_csv(irt_ajuste,  dir_salidas %>% file.path("irt_ajuste.csv"))
-if (nrow(irt_omitidos) > 0) {
-  saveRDS(irt_omitidos, dir_salidas %>% file.path("irt_omitidos.rds"))
-  write_csv(irt_omitidos, dir_salidas %>% file.path("irt_omitidos.csv"))
-} else if (file.exists(dir_salidas %>% file.path("irt_omitidos.rds"))) {
-  # Ya no hay grupos omitidos: se borra el registro viejo para que no
-  # quede un archivo que contradice a la corrida actual.
-  file.remove(dir_salidas %>% file.path("irt_omitidos.rds"))
-}
-write_csv(irt_formas,  dir_salidas %>% file.path("irt_dificultad_formas.csv"))
-write_csv(irt_linking, dir_salidas %>% file.path("irt_linking.csv"))
+# Todo lo que produce este script va en UNA lista. Las huellas van dentro
+# de la misma lista a propósito: al escribirse en el mismo `saveRDS` que
+# los resultados, no puede quedar un estado donde las huellas digan que un
+# grupo está calibrado y los resultados no lo tengan. Si el script muere
+# antes de esta línea, no se escribe nada y la próxima corrida rehace todo.
+salida_irt <- list(
+  theta    = irt_theta,      # habilidad estimada por estudiante (insumo de 01b)
+  items    = irt_items,      # parámetros a y b por ítem
+  formas   = irt_formas,     # dificultad de cada forma en escala común
+  linking  = irt_linking,    # personas comunes por par de formas
+  ajuste   = irt_ajuste,     # convergencia y tamaño de cada calibración
+  omitidos = irt_omitidos,   # grupos que no se pudieron calibrar
+  huellas  = huellas_nuevas  # qué archivos generaron cada grupo
+)
 
-# Las huellas van al final, y sólo si todo lo anterior se guardó bien: si
-# el script muriera antes, la próxima corrida recalibra en vez de dar por
-# buena una salida a medio escribir.
-saveRDS(huellas_nuevas, ruta_huellas)
+saveRDS(salida_irt, RUTA_SALIDA)
 
-cat("\n\nListo. Salidas en", dir_salidas, "\n")
-cat("  - irt_theta.rds   : habilidad estimada por estudiante (insumo de 01)\n")
-cat("  - irt_items.rds   : parámetros a y b por ítem\n")
-cat("  - irt_formas.rds  : dificultad de cada forma en escala común\n")
-cat("  - irt_linking.rds : personas comunes por par de formas\n")
-cat("  - irt_huellas.rds : qué archivos generaron cada grupo (control de\n")
-cat("                      la calibración incremental)\n")
+cat("\n\nListo. Salida en", RUTA_SALIDA, "\n")
+cat("Es una lista con:", paste(names(salida_irt), collapse = ", "), "\n")
+cat("Para leerla:  irt <- readRDS('salida_00_irt.rds');  irt$theta\n")
 cat("\nRECORDATORIO: theta es comparable DENTRO de cada año x grado x área,\n")
 cat("no entre años. Ver la nota del encabezado sobre el enlace entre años.\n")

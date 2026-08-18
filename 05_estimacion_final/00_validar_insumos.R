@@ -1,20 +1,18 @@
 # =============================================================
 # 00_validar_insumos.R
 # -------------------------------------------------------------
-# Chequeo previo. Corre ANTES de calcular nada y revisa que estén todas
+# Chequeo previo. Correr ANTES de calcular nada y revisar que estén todas
 # las condiciones para que el pipeline llegue hasta el final.
 #
 # Existe porque la mayoría de las fallas de una corrida no son del modelo
 # sino de los insumos: un archivo mal nombrado, un Excel sin la hoja que
 # corresponde, un archivo de OneDrive que figura pero no está descargado.
-# Descubrir eso a los veinte minutos de cálculo es caro y el mensaje de
-# error nativo no explica nada.
 #
 # Se puede correr solo (doble clic en VALIDAR.bat o Rscript sobre este
-# archivo) o lo llama el driver antes de empezar.
+# archivo) 
 # =============================================================
 
-# La carpeta de este script. El driver la define antes de cargarlo; si se
+# La carpeta de este script. El master la define antes de cargarlo; si se
 # corre solo, se deduce del argumento --file de Rscript.
 if (!exists("DIR_PRODUCCION")) {
   .args <- commandArgs(trailingOnly = FALSE)
@@ -77,7 +75,7 @@ if (is.null(rutas) || !all(c("data_in", "data_intermedia", "data_out") %in% name
   imprimir_registro(registro)
   cat("\nNO SE PUEDE CONTINUAR: arregle rutas.txt y vuelva a intentar.\n")
   validacion_ok <- FALSE
-  if (!exists("EJECUTADO_POR_DRIVER")) quit(save = "no", status = 1)
+  if (!exists("EJECUTADO_POR_MASTER")) quit(save = "no", status = 1)
 }
 
 dir_salidas <- file.path(rutas[["data_out"]], "modelo_lme_alu_v2")
@@ -115,7 +113,7 @@ if (length(archivos) > 0) {
     anotar(registro, "ERROR",
            paste(nrow(malos), "archivo(s) con nombre que no se entiende"),
            paste0(paste(malos$archivo, collapse = "\n"),
-                  "\nVer CONTRATO_DE_DATOS.md: el nombre debe traer el año",
+                  "\nVer DATOS_REQUERIDOS.md: el nombre debe traer el año",
                   " (20XX) y el número de ensayo (EnsayoN)."))
   }
 
@@ -125,7 +123,7 @@ if (length(archivos) > 0) {
                                     collapse = "\n"),
                               "\nEl pipeline lee un solo dígito: 'Ensayo10' se",
                               " leería como ensayo 1.\nHay que renombrar o",
-                              " ajustar el patrón en 00_irt_calibracion.R."))
+                              " ajustar el patrón en 00_calibracion_irt.R."))
   }
 
   resumen_formas <- as.data.frame(
@@ -159,14 +157,14 @@ if (length(archivos) > 0) {
 }
 
 # ---- 6. Contenido de los Excel ---------------------------------------
-# Mismo chequeo que hace 00_irt_calibracion.R por dentro, pero antes de
+# Mismo chequeo que hace 00_calibracion_irt.R por dentro, pero antes de
 # empezar a calcular.
 revisar_excel <- function(ruta) {
   m <- tryCatch(suppressMessages(readxl::read_excel(ruta, sheet = "Matriz", n_max = 5)),
                 error = function(e) e)
   if (inherits(m, "error")) return("no tiene la hoja 'Matriz' o no se puede abrir")
   # Los encabezados vienen con tildes y espacios ("Ítem ID"); se normalizan
-  # con la misma función que usa 00_irt_calibracion.R.
+  # con la misma función que usa 00_calibracion_irt.R.
   nm <- janitor::make_clean_names(names(m))
   if (!any(nm == "item_id"))    return("la hoja 'Matriz' no tiene la columna 'Ítem ID'")
   if (!any(grepl("clave", nm))) return("la hoja 'Matriz' no tiene la columna 'Clave correcta(s)'")
@@ -216,11 +214,19 @@ registro <- if (length(falta_int) == 0) {
 }
 
 # ---- 8. Salidas de 01a (insumos de SIMCE) ----------------------------
-de_01a <- c("simce_dist.rds", "simce_colegio.rds", "contexto_colegio.rds",
-            "nivel_historico.rds", "sd_historica.rds", "respaldo_historico.rds",
-            "conf_simce.rds", "descriptivos_simce.rds", "forma_z.rds",
-            "cortes_tercil.rds", "limites_simce.rds", "anios_horizonte.rds")
-falta_01a <- de_01a[!file.exists(file.path(dir_salidas, de_01a))]
+# Cada script guarda todo lo suyo en una sola lista, así que basta con
+# comprobar que el archivo esté y traiga los elementos que 01b necesita.
+salida_01a <- "salida_01a_simce.rds"
+elementos_01a <- c("simce_dist", "simce_colegio", "contexto_colegio",
+                   "nivel_historico", "sd_historica", "respaldo_historico",
+                   "conf_simce", "descriptivos", "forma_z", "cortes_tercil",
+                   "limites_simce", "anios_horizonte")
+
+falta_01a <- if (!file.exists(file.path(dir_salidas, salida_01a))) {
+  salida_01a
+} else {
+  setdiff(elementos_01a, names(readRDS(file.path(dir_salidas, salida_01a))))
+}
 
 registro <- if (length(falta_01a) == 0) {
   anotar(registro, "OK", "Insumos de SIMCE presentes (salidas de 01a)")
@@ -234,7 +240,7 @@ registro <- if (length(falta_01a) == 0) {
 # ---- 9. El horizonte cubre el año objetivo ---------------------------
 if (length(falta_01a) == 0 && !is.null(info$anio_objetivo) &&
     is.finite(info$anio_objetivo)) {
-  horizonte <- readRDS(file.path(dir_salidas, "anios_horizonte.rds"))
+  horizonte <- readRDS(file.path(dir_salidas, salida_01a))$anios_horizonte
   registro <- if (info$anio_objetivo %in% horizonte) {
     anotar(registro, "OK",
            paste0("El año ", info$anio_objetivo, " está dentro del horizonte de 01a"),
@@ -249,18 +255,28 @@ if (length(falta_01a) == 0 && !is.null(info$anio_objetivo) &&
 }
 
 # ---- 10. Modelos entrenados ------------------------------------------
-modelos_req <- c("modelos_escolares_produccion.rds",
-                 "modelos_dispersion_produccion.rds",
-                 "limites_dispersion_produccion.rds",
-                 "anios_cerrados.rds")
-falta_mod <- modelos_req[!file.exists(file.path(dir_salidas, modelos_req))]
+falta_mod <- character(0)
+for (req in list(c("salida_02a_nivel.rds", "modelos_produccion", "anios_cerrados"),
+                 c("salida_02b_dispersion.rds", "modelos_produccion",
+                   "limites_produccion"))) {
+  archivo <- req[1]
+  if (!file.exists(file.path(dir_salidas, archivo))) {
+    falta_mod <- c(falta_mod, archivo)
+  } else {
+    faltantes <- setdiff(req[-1], names(readRDS(file.path(dir_salidas, archivo))))
+    if (length(faltantes)) {
+      falta_mod <- c(falta_mod, paste0(archivo, " (sin ",
+                                       paste(faltantes, collapse = ", "), ")"))
+    }
+  }
+}
 
 registro <- if (length(falta_mod) == 0) {
   anotar(registro, "OK", "Modelos entrenados presentes")
 } else {
   anotar(registro, "ERROR", "Faltan modelos entrenados",
          paste0("Falta: ", paste(falta_mod, collapse = ", "),
-                "\nLos generan 02_modelo_escolar.R y 02b_modelo_dispersion.R.",
+                "\nLos generan 02a_estimacion_nivel.R y 02b_estimacion_dispersion.R.",
                 "\nSólo hace falta repetirlo cuando llega un SIMCE nuevo."))
 }
 
@@ -268,7 +284,8 @@ registro <- if (length(falta_mod) == 0) {
 # No bloquea la corrida: se puede predecir igual. Pero si llegó un SIMCE
 # que no está en los modelos, conviene re-estimar antes.
 if (length(falta_mod) == 0 && length(falta_int) == 0) {
-  anios_cerrados <- readRDS(file.path(dir_salidas, "anios_cerrados.rds"))
+  anios_cerrados <- readRDS(file.path(dir_salidas,
+                                      "salida_02a_nivel.rds"))$anios_cerrados
   anios_simce <- tryCatch({
     d <- arrow::open_dataset(intermedios[2])
     sort(unique(as.numeric(dplyr::pull(dplyr::collect(dplyr::distinct(d, agno)), agno))))
@@ -311,6 +328,6 @@ if (validacion_ok && n_aviso == 0) {
 }
 cat("-------------------------------------------------------------\n")
 
-if (!exists("EJECUTADO_POR_DRIVER")) {
+if (!exists("EJECUTADO_POR_MASTER")) {
   quit(save = "no", status = if (validacion_ok) 0 else 1)
 }

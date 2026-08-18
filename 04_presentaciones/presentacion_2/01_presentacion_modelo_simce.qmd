@@ -157,7 +157,7 @@ Antes de construir el modelo, los datos pasan por un proceso de limpieza que cor
 mostrar_tabla(
   "t_simce_anio",
   "Número de colegios y de alumnos distintos con puntaje SIMCE en cada año.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ::::
@@ -168,7 +168,7 @@ mostrar_tabla(
 mostrar_grafico(
   "g_simce_por_anio",
   "Puntaje SIMCE promedio por año, grado y área.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ::::
@@ -185,7 +185,7 @@ mostrar_grafico(
 mostrar_grafico(
   "g_densidad_simce",
   "Densidad de los puntajes SIMCE individuales por grado y área: la escala de la variable y cuánta variación hay que reproducir.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ## Gran parte de la varianza es dentro de cada colegio
@@ -197,7 +197,7 @@ mostrar_grafico(
 mostrar_tabla(
   "t_varianza",
   "Descomposición de la varianza total de los puntajes SIMCE en su componente entre colegios y dentro del colegio.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 La mayor parte de la variación de los puntajes ocurre **entre estudiantes del mismo colegio**, no entre colegios. Por eso predecir el promedio del establecimiento deja fuera la parte más informativa del resultado.
@@ -211,7 +211,7 @@ La mayor parte de la variación de los puntajes ocurre **entre estudiantes del m
 mostrar_tabla(
   "t_ensayos_anio",
   "Número de colegios, de alumnos distintos y de ensayos rendidos por año, con el promedio de ensayos que rinde cada alumno en cada área.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 - El número de colegios que cuentan con Ensayos Santillana ha aumentado cada año (se asume que seguirá aumentando)
@@ -226,7 +226,7 @@ mostrar_tabla(
 mostrar_grafico(
   "g_densidad_logro",
   "Densidad del logro promedio de cada estudiante en los ensayos, por grado y área.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ## Del ensayo al SIMCE
@@ -238,7 +238,7 @@ mostrar_grafico(
 mostrar_grafico(
   "g_ensayo_vs_simce",
   "SIMCE promedio del colegio vs. logro medio en los ensayos, con la recta de mínimos cuadrados ajustada dentro de cada grado y área.",
-  "01_preparar_datos.R -> school_model_data.rds")
+  "01b_insumos_ensayo.R -> $school_model_data")
 ```
 
 
@@ -251,7 +251,7 @@ mostrar_grafico(
 mostrar_grafico(
   "g_logro_por_evaluacion",
   "Logro medio en cada ensayo sucesivo del año, por año, grado y área: la progresión que recoge la pendiente del modelo de crecimiento.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ## Las dos fuentes no siempre se mueven juntas
@@ -263,7 +263,7 @@ mostrar_grafico(
 mostrar_grafico(
   "g_evolucion_estandarizada",
   "Evolución del SIMCE y del logro en los ensayos, sobre un panel balanceado de colegios, con cada serie estandarizada dentro de su grado y área para poder compararlas.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ## Otros factores: el contexto del colegio
@@ -275,7 +275,7 @@ mostrar_grafico(
 mostrar_grafico(
   "g_simce_por_gse",
   "SIMCE promedio del colegio según grupo socioeconómico, por grado y área, en el universo nacional.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ## Sobre qué población vale el modelo
@@ -287,7 +287,7 @@ mostrar_grafico(
 mostrar_grafico(
   "g_composicion_gse",
   "Distribución de colegios por grupo socioeconómico: los que tienen ensayo vs. el universo nacional. Muestra sobre qué población valen los coeficientes del modelo.",
-  "01_preparar_datos.R -> descriptivos.rds")
+  "01b_insumos_ensayo.R -> $descriptivos")
 ```
 
 ## Cobertura y consistencia de las fuentes
@@ -529,7 +529,7 @@ mostrar_tabla(
 mostrar_tabla(
   "t_nivel",
   "MAE y R² del modelo final en el año de prueba, con el MAE de referencia de modelo anterior y modelo 1 sobre el mismo universo de colegios.",
-  "02_modelo_escolar.R -> metricas_validacion.csv")
+  "02a_estimacion_nivel.R -> $metricas")
 ```
 
 ## Nivel: observado vs. predicho
@@ -541,7 +541,7 @@ mostrar_tabla(
 mostrar_grafico(
   "g_obs_pred_nivel",
   "SIMCE observado vs. predicho por colegio en el año de prueba, con diagonal de referencia.",
-  "02_modelo_escolar.R -> diag_nivel.rds")
+  "02a_estimacion_nivel.R -> $diagnostico")
 ```
 
 ## Validación del modelo de dispersión
@@ -553,7 +553,7 @@ mostrar_grafico(
 mostrar_tabla(
   "t_dispersion",
   "MAE del modelo de dispersión vs. dos baselines (misma sd para todos, y la sd histórica del propio colegio), R², y el error como porcentaje del ancho estimado.",
-  "02b_modelo_dispersion.R -> metricas_dispersion.csv")
+  "02b_estimacion_dispersion.R -> $metricas")
 ```
 
 ## Dispersión: observada vs. predicha
@@ -565,7 +565,7 @@ mostrar_tabla(
 mostrar_grafico(
   "g_obs_pred_sd",
   "Desviación estándar interna observada vs. predicha por colegio, con diagonal de referencia.",
-  "02b_modelo_dispersion.R -> diag_dispersion.rds")
+  "02b_estimacion_dispersion.R -> $diagnostico")
 ```
 
 **Cómo dimensionar el error:** reportarlo como porcentaje del ancho típico que se estima (la sd interna suele estar entre ~40 y ~55 puntos).
@@ -587,7 +587,7 @@ Sin vínculo alumno-a-alumno, la pregunta es: ¿el **conjunto** de predicciones 
 mostrar_tabla(
   "t_distribucional",
   "Error de cuantiles del modelo, del baseline 'solo la media', y del mismo reparto con la media y la sd observadas del colegio: esa columna separa el error del modelo de colegio del error del paso a individuo.",
-  "04_validacion_individual.R -> validacion_distribucional.csv")
+  "04_validacion.R -> $distribucional")
 ```
 
 ## Validación de la predicción individual (cont.)
@@ -599,7 +599,7 @@ mostrar_tabla(
 mostrar_grafico(
   "g_densidad_validacion",
   "Densidad de los puntajes individuales predichos vs. observados, agrupando todos los colegios validados.",
-  "04_validacion_individual.R -> dens_validacion.rds")
+  "04_validacion.R -> $densidades")
 ```
 
 ## ¿Cuántos estudiantes en cada nivel de aprendizaje?
@@ -611,7 +611,7 @@ mostrar_grafico(
 mostrar_tabla(
   "t_niveles_logro",
   "Porcentaje de estudiantes en cada Nivel de Aprendizaje según el SIMCE real y según la predicción del modelo, por grado y área.",
-  "04_validacion_individual.R -> niveles_logro.rds")
+  "04_validacion.R -> $niveles_logro")
 ```
 
 Los cortes son los oficiales de los **Estándares de Aprendizaje**, no salen de estos datos. Acertar la composición por nivel es más exigente que acertar el promedio: un corrimiento de pocos puntos en la predicción mueve a todos los estudiantes que están cerca de un corte.

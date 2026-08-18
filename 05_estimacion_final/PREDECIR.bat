@@ -45,8 +45,8 @@ if not defined RSCRIPT (
 echo Usando R:  %RSCRIPT%
 echo.
 
-rem --- Correr el driver -------------------------------------------------
-"%RSCRIPT%" "%~dp0driver_prediccion.R"
+rem --- Correr el master -------------------------------------------------
+"%RSCRIPT%" "%~dp0master_prediccion.R"
 set CODIGO=%ERRORLEVEL%
 
 echo.
@@ -56,7 +56,7 @@ if %CODIGO% neq 0 (
   echo =============================================================
 ) else (
   echo =============================================================
-  echo  LISTO. Se abrio el informe en el navegador.
+  echo  LISTO. Revise log_corrida.txt antes de entregar.
   echo =============================================================
 )
 echo.

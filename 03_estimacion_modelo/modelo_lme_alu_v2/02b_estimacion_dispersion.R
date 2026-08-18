@@ -1,8 +1,8 @@
 # =============================================================
-# 02b_modelo_dispersion.R
+# 02b_estimacion_dispersion.R
 # -------------------------------------------------------------
 # Segundo modelo del colegio: en vez del PROMEDIO del SIMCE
-# (02_modelo_escolar.R), predice el ANCHO de su distribución interna, es
+# (02a_estimacion_nivel.R), predice el ANCHO de su distribución interna, es
 # decir la desviación estándar de los puntajes de sus estudiantes:
 #
 #   sd_simce ~ sd_entre_estud + iqr_logro_ensayo + sd_hist_colegio +
@@ -57,7 +57,18 @@ rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 
-school_model_data <- dir_salidas %>% file.path('school_model_data.rds') %>% readRDS()
+leer_salida <- function(archivo, de) {
+  ruta <- dir_salidas %>% file.path(archivo)
+  if (!file.exists(ruta)) {
+    stop("Falta ", archivo, " en ", dir_salidas, ".
+",
+         "Lo genera ", de, ": hay que correrlo antes.")
+  }
+  readRDS(ruta)
+}
+
+school_model_data <- leer_salida("salida_01b_ensayo.rds",
+                                 "01b_insumos_ensayo.R")$school_model_data
 
 # Sólo sirven los colegios con sd interna observada y estable.
 datos_sd <- school_model_data %>%
@@ -198,16 +209,19 @@ p_sd <- ggplot(diag_sd, aes(sd_observada, sd_predicha)) +
 ggsave(dir_salidas %>% file.path("diagnostico_dispersion.png"), p_sd, width = 8, height = 6)
 
 # ---- Guardar ----------------------------------------------------------
-saveRDS(modelos_sd, dir_salidas %>% file.path("modelos_dispersion.rds"))
-saveRDS(diag_sd,    dir_salidas %>% file.path("diag_dispersion.rds"))  # lo usa 05
-saveRDS(limites_sd, dir_salidas %>% file.path("limites_dispersion.rds"))
-saveRDS(modelos_sd_produccion,
-        dir_salidas %>% file.path("modelos_dispersion_produccion.rds"))
-saveRDS(limites_sd_produccion,
-        dir_salidas %>% file.path("limites_dispersion_produccion.rds"))
-write_csv(tabla_sd, dir_salidas %>% file.path("metricas_dispersion.csv"))
+salida_dispersion <- list(
+  modelos            = modelos_sd,             # excluyen el último año
+  limites            = limites_sd,             # recorte de la sd predicha
+  modelos_produccion = modelos_sd_produccion,  # todos los años
+  limites_produccion = limites_sd_produccion,
+  metricas           = tabla_sd,
+  diagnostico        = diag_sd                 # observado vs. predicho
+)
 
-cat("\nListo. Modelos de dispersión en",
-    dir_salidas %>% file.path("modelos_dispersion.rds"), "\n")
-cat("Métricas en", dir_salidas %>% file.path("metricas_dispersion.csv"), "\n")
+saveRDS(salida_dispersion,
+        dir_salidas %>% file.path("salida_02b_dispersion.rds"))
+
+cat("\nListo. Salida en",
+    dir_salidas %>% file.path("salida_02b_dispersion.rds"), "\n")
+cat("Es una lista con:", paste(names(salida_dispersion), collapse = ", "), "\n")
 

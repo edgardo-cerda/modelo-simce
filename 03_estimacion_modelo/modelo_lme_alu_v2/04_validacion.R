@@ -1,5 +1,5 @@
 # =============================================================
-# 04_validacion_individual.R
+# 04_validacion.R
 # -------------------------------------------------------------
 # ¿Cómo se valida una predicción individual si no existe un vínculo
 # alumno-a-alumno entre el ensayo Santillana y el SIMCE?
@@ -29,7 +29,7 @@
 # los estudiantes del colegio el mismo puntaje predicho, que es lo que se
 # podía ofrecer antes de tener el archivo de alumnos.
 #
-# La validación es out-of-time: los modelos de 02 y 02b se entrenaron
+# La validación es out-of-time: los modelos de 02a y 02b se entrenaron
 # excluyendo este año, y la forma de la distribución y la dispersión
 # histórica se calcularon en 01 con ventana expansiva.
 #
@@ -49,9 +49,22 @@ dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 MIN_ALU_VALID <- 15
 QS <- seq(0.05, 0.95, by = 0.05)
 
-pred_individual <- dir_salidas %>% file.path("predicciones_individual.rds") %>% readRDS()
-simce_alumno    <- dir_salidas %>% file.path("simce_alumno.rds") %>% readRDS()
-simce_dist      <- dir_salidas %>% file.path("simce_dist.rds") %>% readRDS()
+leer_salida <- function(archivo, de) {
+  ruta <- dir_salidas %>% file.path(archivo)
+  if (!file.exists(ruta)) {
+    stop("Falta ", archivo, " en ", dir_salidas, ".
+",
+         "Lo genera ", de, ": hay que correrlo antes.")
+  }
+  readRDS(ruta)
+}
+
+simce <- leer_salida("salida_01a_simce.rds", "01a_insumos_simce.R")
+
+pred_individual <- leer_salida("salida_03_prediccion.rds",
+                               "03_prediccion.R")$individual
+simce_alumno    <- simce$simce_alumno
+simce_dist      <- simce$simce_dist
 
 anio_val <- max(pred_individual$agno)
 cat("Validando predicciones individuales del año:", anio_val, "\n")
@@ -335,18 +348,20 @@ cat("\nRecordatorio: los cortes son los oficiales de los Estándares de\n",
     "Aprendizaje, no salen de estos datos. Ver el encabezado de esta sección.\n\n")
 
 # ---- 5. Guardar ------------------------------------------------------
-saveRDS(niveles_logro,   dir_salidas %>% file.path("niveles_logro.rds"))
-write_csv(niveles_logro, dir_salidas %>% file.path("validacion_niveles_logro.csv"))
-saveRDS(dens_validacion, dir_salidas %>% file.path("dens_validacion.rds"))
-saveRDS(comp %>% select(-starts_with("q_")),
-        dir_salidas %>% file.path("validacion_por_colegio.rds"))
-write_csv(comp %>% select(-starts_with("q_")),
-          dir_salidas %>% file.path("validacion_por_colegio.csv"))
-write_csv(resumen_dist, dir_salidas %>% file.path("validacion_distribucional.csv"))
-write_csv(resumen_ind,  dir_salidas %>% file.path("validacion_individual.csv"))
-write_csv(por_estrato,  dir_salidas %>% file.path("validacion_por_estrato.csv"))
+salida_validacion <- list(
+  distribucional = resumen_dist,    # error de cuantiles por grupo
+  individual     = resumen_ind,     # error individual, cota optimista
+  por_colegio    = comp %>% select(-starts_with("q_")),
+  por_estrato    = por_estrato,     # desglose por GSE
+  niveles_logro  = niveles_logro,   # composición observada vs. predicha
+  densidades     = dens_validacion  # curvas para la presentación
+)
 
-cat("\nListo. Resultados en ", dir_salidas, ":\n",
-    " - validacion_distribucional.csv / validacion_individual.csv\n",
-    " - validacion_por_colegio.csv / validacion_por_estrato.csv\n",
-    " - validacion_distribucion_individual.png / validacion_dispersion_individual.png\n")
+saveRDS(salida_validacion,
+        dir_salidas %>% file.path("salida_04_validacion.rds"))
+
+cat("\nListo. Salida en",
+    dir_salidas %>% file.path("salida_04_validacion.rds"), "\n")
+cat("Es una lista con:", paste(names(salida_validacion), collapse = ", "), "\n")
+cat("Gráficos: validacion_distribucion_individual.png,",
+    "validacion_dispersion_individual.png\n")

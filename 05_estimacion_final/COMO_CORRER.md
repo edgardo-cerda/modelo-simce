@@ -22,7 +22,7 @@ Toma varios minutos y sólo se hace una vez. Al final debe decir `Todo listo`.
 
 ## Cada vez que llega una ronda de ensayos
 
-**1. Copiar los Excel** a la carpeta de ensayos, respetando el nombre de archivo. El nombre no es decorativo: de ahí sale el año, el grado, el área y el número de ensayo. Ver `CONTRATO_DE_DATOS.md`.
+**1. Copiar los Excel** a la carpeta de ensayos, respetando el nombre de archivo. El nombre no es decorativo: de ahí sale el año, el grado, el área y el número de ensayo. Ver `DATOS_REQUERIDOS.md`.
 
 **2. Verificar que estén descargados.** Si los datos están en OneDrive, seleccionar la carpeta, hacer clic derecho y elegir **"Conservar siempre en este dispositivo"**. Un archivo que figura pero no está bajado hace fallar la corrida.
 
@@ -30,13 +30,10 @@ Toma varios minutos y sólo se hace una vez. Al final debe decir `Todo listo`.
 
 **4. Doble clic en `PREDECIR.bat`.** Corre todo. Toma entre 10 y 30 minutos según cuántos ensayos haya. **No cerrar la ventana.**
 
-**5. Leer el informe.** Al terminar se abre solo en el navegador. Empieza con un veredicto:
+**5. Revisar el log antes de entregar.** En `log_corrida.txt` queda todo lo que imprimieron los scripts. Vale la pena mirar dos cosas:
 
-| Veredicto | Qué significa |
-|---|---|
-| 🟢 **SE PUEDE PUBLICAR** | Todos los chequeos pasaron. |
-| 🟡 **REVISAR ANTES DE PUBLICAR** | Se puede usar, pero hay secciones que conviene leer. |
-| 🔴 **NO PUBLICAR SIN REVISAR** | Los números pueden estar sistemáticamente corridos. |
+- **Cuántas formas se leyeron** por grado y área, para confirmar que el sistema tomó lo que usted entregó.
+- **La comparabilidad del banco de ítems**, que imprime `01b`. Si el nivel implícito del año nuevo se corrió respecto de los anteriores, aparece un aviso: las predicciones de esos grupos pueden estar desplazadas en la misma dirección.
 
 ---
 
@@ -46,10 +43,9 @@ En la carpeta de salidas, dentro de `modelo_lme_alu_v2/entregas/<año>/`:
 
 | Archivo | Qué es |
 |---|---|
-| `informe_calidad.html` | El veredicto y los chequeos. **Abrir esto primero.** |
 | `predicciones_colegio.csv` | Una fila por colegio: promedio y dispersión predichos. |
 | `predicciones_individual.csv` | Una fila por estudiante: puntaje predicho. |
-| `log_corrida.txt` | Detalle técnico. Sirve si algo falló. |
+| `log_corrida.txt` | Todo lo que imprimieron los scripts. **Revisar antes de entregar.** |
 
 ---
 
@@ -61,7 +57,7 @@ La ventana negra no se cierra sola: el mensaje de error queda a la vista. Casi t
 
 **"archivo(s) no están descargados"** — es OneDrive. Clic derecho sobre la carpeta → "Conservar siempre en este dispositivo".
 
-**"nombre que no se entiende"** — un Excel no sigue la convención de nombres. El mensaje dice cuál. Ver `CONTRATO_DE_DATOS.md`.
+**"nombre que no se entiende"** — un Excel no sigue la convención de nombres. El mensaje dice cuál. Ver `DATOS_REQUERIDOS.md`.
 
 Si el error es otro, adjuntar `log_corrida.txt` al pedir ayuda: ahí está el detalle completo.
 
@@ -78,18 +74,19 @@ La re-estimación corre, **en este orden**, desde la carpeta del proyecto:
 ```
 Rscript 01_preparar_datos/01_cargar_y_consolidar_simce.R
 Rscript 01_preparar_datos/04_limpieza_errores_y_outliers_simce.R
-Rscript 03_modelo/modelo_lme_alu_v2/00_irt_calibracion.R
-Rscript 03_modelo/modelo_lme_alu_v2/01a_insumos_simce.R
-Rscript 03_modelo/modelo_lme_alu_v2/01b_insumos_ensayo.R
-Rscript 03_modelo/modelo_lme_alu_v2/02_modelo_escolar.R
-Rscript 03_modelo/modelo_lme_alu_v2/02b_modelo_dispersion.R
-Rscript 03_modelo/modelo_lme_alu_v2/03_prediccion_nueva_ronda.R
-Rscript 03_modelo/modelo_lme_alu_v2/04_validacion_individual.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/00_calibracion_irt.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/01a_insumos_simce.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/01b_insumos_ensayo.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/02a_estimacion_nivel.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/02b_estimacion_dispersion.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/02c_estimacion_posicion.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/03_prediccion.R
+Rscript 03_estimacion_modelo/modelo_lme_alu_v2/04_validacion.R
 ```
 
 Toma bastante más que predecir: `01a` solo son unos 6 minutos, y `00` varios más.
 
-**Conviene que la haga alguien que conozca el modelo.** No es sólo apretar play: es el momento de revisar si las métricas de precisión se movieron, si los coeficientes se mantienen estables al incorporar el año nuevo, y si las decisiones que quedaron abiertas siguen siendo válidas. Los criterios están en `REGISTRO_VERSIONES_Y_PRUEBAS.txt`, en la carpeta de arriba.
+**Conviene que la haga alguien que conozca el modelo.** No es sólo apretar play: es el momento de revisar si las métricas de precisión se movieron, si los coeficientes se mantienen estables al incorporar el año nuevo, y si las decisiones que quedaron abiertas siguen siendo válidas. Los criterios están en `REGISTRO_VERSIONES_Y_PRUEBAS.txt`, dentro de `03_estimacion_modelo/modelo_lme_alu_v2/`.
 
 ---
 
@@ -97,6 +94,6 @@ Toma bastante más que predecir: `01a` solo son unos 6 minutos, y `00` varios m�
 
 Vale la pena tenerlo presente al entregar los resultados.
 
-- **No se valida contra el año que predice.** El año nuevo todavía no rindió la prueba. La precisión que reporta el informe es la medida sobre el último año cerrado.
+- **No se valida contra el año que predice.** El año nuevo todavía no rindió la prueba. La precisión conocida del modelo es la medida sobre el último año cerrado, y está en el registro de versiones.
 - **La predicción individual es una posición esperada dentro del curso**, no un puntaje garantizado. No existe forma de validarla estudiante por estudiante: no hay vínculo entre el alumno del ensayo y el del SIMCE.
-- **El nivel absoluto es lo más frágil.** El logro de los ensayos se mueve entre años por razones que no son sólo mejora real. Por eso el informe revisa la comparabilidad del banco de ítems y avisa cuando se corre.
+- **El nivel absoluto es lo más frágil.** El logro de los ensayos se mueve entre años por razones que no son sólo mejora real. Por eso `01b` revisa la comparabilidad del banco de ítems y avisa en el log cuando se corre.

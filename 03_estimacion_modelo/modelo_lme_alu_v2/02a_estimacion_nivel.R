@@ -1,5 +1,5 @@
 # =============================================================
-# 02_modelo_escolar.R
+# 02a_estimacion_nivel.R
 # -------------------------------------------------------------
 # Modelo del NIVEL del colegio: predice su promedio SIMCE.
 #
@@ -60,7 +60,19 @@ rutas <- config::get(config = usuario, file = "config.yml")
 ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 
-school_model_data <- dir_salidas %>% file.path('school_model_data.rds') %>% readRDS()
+# Cada script del pipeline guarda todo lo suyo en una sola lista.
+leer_salida <- function(archivo, de) {
+  ruta <- dir_salidas %>% file.path(archivo)
+  if (!file.exists(ruta)) {
+    stop("Falta ", archivo, " en ", dir_salidas, ".
+",
+         "Lo genera ", de, ": hay que correrlo antes.")
+  }
+  readRDS(ruta)
+}
+
+school_model_data <- leer_salida("salida_01b_ensayo.rds",
+                                 "01b_insumos_ensayo.R")$school_model_data
 
 anios     <- sort(unique(school_model_data$agno))
 anio_test <- max(anios)
@@ -220,17 +232,20 @@ ggsave(dir_salidas %>% file.path("diagnostico_observado_vs_predicho.png"),
        p, width = 8, height = 6)
 
 # ---- 4. Guardar -------------------------------------------------------
-saveRDS(modelos, dir_salidas %>% file.path("modelos_escolares.rds"))
-saveRDS(modelos_produccion,
-        dir_salidas %>% file.path("modelos_escolares_produccion.rds"))
-# Años con SIMCE observado. 03 lo usa para saber si el año que va a
-# predecir es uno cerrado (y entonces corresponde el modelo de validación)
-# o una ronda nueva (y corresponde el de producción).
-saveRDS(anios, dir_salidas %>% file.path("anios_cerrados.rds"))
-saveRDS(diag_plot_data, dir_salidas %>% file.path("diag_nivel.rds"))
-saveRDS(anio_test, dir_salidas %>% file.path("anio_test.rds"))
-write_csv(tabla_resultados, dir_salidas %>% file.path("metricas_validacion.csv"))
+salida_nivel <- list(
+  modelos            = modelos,            # excluyen el último año: miden
+  modelos_produccion = modelos_produccion, # todos los años: predicen
+  # Años con SIMCE observado. 03 lo usa para saber si el año que va a
+  # predecir es uno cerrado (y entonces corresponde el modelo de
+  # validación) o una ronda nueva (y corresponde el de producción).
+  anios_cerrados     = anios,
+  anio_test          = anio_test,
+  metricas           = tabla_resultados,
+  diagnostico        = diag_plot_data      # observado vs. predicho
+)
 
-cat("\nListo. Modelos de NIVEL en",
-    dir_salidas %>% file.path("modelos_escolares.rds"), "\n")
-cat("Siguiente paso: 02b_modelo_dispersion.R (modelo del ANCHO de la distribución)\n")
+saveRDS(salida_nivel, dir_salidas %>% file.path("salida_02a_nivel.rds"))
+
+cat("\nListo. Salida en", dir_salidas %>% file.path("salida_02a_nivel.rds"), "\n")
+cat("Es una lista con:", paste(names(salida_nivel), collapse = ", "), "\n")
+cat("Siguiente paso: 02b_estimacion_dispersion.R (modelo del ANCHO de la distribución)\n")

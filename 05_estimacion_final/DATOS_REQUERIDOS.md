@@ -1,4 +1,4 @@
-# Contrato de datos
+# Datos requeridos
 
 Qué archivos espera el modelo, cómo se llaman y qué tienen adentro.
 
@@ -39,7 +39,7 @@ IIM_Ensayo4_2026_LEN.xlsx     -> 2026, 2° medio, lenguaje, ensayo 4
 
 **Dos advertencias**
 
-- **El número de ensayo es de un solo dígito.** `Ensayo10` se leería como ensayo 1, en silencio. El chequeo lo detecta y detiene la corrida. Si algún año hay diez o más ensayos, hay que ajustar el patrón en `00_irt_calibracion.R`.
+- **El número de ensayo es de un solo dígito.** `Ensayo10` se leería como ensayo 1, en silencio. El chequeo lo detecta y detiene la corrida. Si algún año hay diez o más ensayos, hay que ajustar el patrón en `00_calibracion_irt.R`.
 - **`IIM` tiene que ir al principio.** `Ensayo1_IIM_2026_LEN.xlsx` se clasificaría como 4° básico.
 
 ### Qué tienen adentro
@@ -106,6 +106,6 @@ Para evitarlo: clic derecho sobre la carpeta de datos → **"Conservar siempre e
 
 El modelo se adapta solo: no hay nada que configurar. Está probado desde una única forma por grado y área.
 
-Lo que **sí** hay que mirar en ese caso es el aviso de **comparabilidad del banco** en el informe. `mean_logro` es el porcentaje del banco de ítems del año que un colegio contestaría bien; con una sola forma ese banco tiene ~40 ítems en vez de ~240, y si su dificultad se corre respecto de años anteriores, el modelo lo lee como si los colegios hubieran cambiado.
+Lo que **sí** hay que mirar en ese caso es el aviso de **comparabilidad del banco** que imprime `01b` en el log. `mean_logro` es el porcentaje del banco de ítems del año que un colegio contestaría bien; con una sola forma ese banco tiene ~40 ítems en vez de ~240, y si su dificultad se corre respecto de años anteriores, el modelo lo lee como si los colegios hubieran cambiado.
 
-El informe lo mide y avisa cuando el salto supera los 3 puntos.
+El script lo mide y avisa cuando el salto supera los 3 puntos.

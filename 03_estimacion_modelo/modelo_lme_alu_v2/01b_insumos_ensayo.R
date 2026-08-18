@@ -29,7 +29,7 @@
 #               estudiante — el porcentaje del banco completo de ítems del
 #               año que contestaría bien dado su theta (curva
 #               característica del test evaluada en theta). Está en puntos
-#               de porcentaje de logro, así que 02, 02b y 03 leen la misma
+#               de porcentaje de logro, así que 02a, 02b y 03 leen la misma
 #               escala de siempre, pero ya no depende de QUÉ ensayos aplicó
 #               el colegio.
 #
@@ -51,20 +51,18 @@
 # pruebas, sección 2.2.
 #
 # -------------------------------------------------------------
-# SALIDAS (en <ruta_outputs>/modelo_lme_alu_v2/)
-#   - ind_features.rds      1 fila por estudiante x año x grado x área.
-#                           `pct_ensayo` es el percentil dentro del colegio,
-#                           lo único que consume la predicción. `z_ensayo`
-#                           es la posición encogida por confiabilidad; NO
-#                           tiene sd 1 dentro del colegio (ver secc. 4).
-#   - school_features.rds   1 fila por colegio x año x grado x área, con
-#                           `mean_logro` y su versión encogida
-#                           `mean_logro_enc`.
-#   - school_model_data.rds school_features + promedio_simce y sd_simce,
-#                           que es lo que entrena 02 y 02b.
-#   - confiabilidades.rds   diagnóstico; ningún script lo necesita para
-#                           predecir.
-#   - descriptivos.rds      tablas resumidas que consume la presentación.
+# SALIDA: un único archivo `salida_01b_ensayo.rds` con una lista de:
+#
+#   $ind_features       1 fila por estudiante x año x grado x área, con su
+#                       medida del ensayo (`mean_logro`) y su theta. NO trae
+#                       la posición dentro del colegio: ése es el tercer
+#                       componente del modelo y lo estima 02c.
+#   $school_features    1 fila por colegio x año x grado x área, con
+#                       `mean_logro` y su versión encogida `mean_logro_enc`.
+#   $school_model_data  school_features + promedio_simce y sd_simce, que es
+#                       lo que entrenan 02a y 02b.
+#   $confiabilidades    la del SIMCE; 02c le agrega la del índice.
+#   $descriptivos       tablas resumidas que consume la presentación.
 # =============================================================
 
 library(tidyverse)
@@ -79,38 +77,34 @@ ruta_outputs <- rutas$ruta_outputs
 dir_salidas <- ruta_outputs %>% file.path('modelo_lme_alu_v2')
 dir_salidas %>% dir.create(showWarnings = FALSE, recursive = TRUE)
 
-# Parámetros del índice individual encogido (sección 4) ------------
-# Mínimo de estudiantes para estimar la varianza verdadera entre alumnos
-# DENTRO de un colegio. Bajo este umbral se usa la del grupo completo.
-MIN_EST_TAU <- 5
+# Piso para la varianza verdadera como fracción de la observada, en el
+# encogimiento del nivel escolar (sección 6b). Evita que un grupo donde el
+# ruido explica toda la varianza entre colegios quede con confiabilidad 0 y
+# todos los colegios encogidos al promedio exacto.
+PISO_TAU2 <- 0.05
 
-# Piso para tau^2 como fracción de la varianza observada: evita que un
-# colegio donde el ruido explica toda la varianza quede con tau^2 = 0 y,
-# por lo tanto, con todos sus estudiantes encogidos exactamente al
-# promedio (lo que borraría el ordenamiento interno).
-PISO_TAU2   <- 0.05
-
-# ---- 1. Insumos de 01a ---------------------------------------------
-# Si falta cualquiera de éstos es que 01a nunca corrió, o que se corrió
-# apuntando a otra carpeta de salidas.
-leer_de_01a <- function(nombre) {
-  ruta <- dir_salidas %>% file.path(nombre)
+# ---- 1. Insumos de otros scripts ------------------------------------
+# Cada script del pipeline guarda todo lo suyo en una sola lista.
+leer_salida <- function(archivo, de) {
+  ruta <- dir_salidas %>% file.path(archivo)
   if (!file.exists(ruta)) {
-    stop("Falta ", nombre, " en ", dir_salidas, ".\n",
-         "Es una salida de 01a_insumos_simce.R: hay que correrlo antes.")
+    stop("Falta ", archivo, " en ", dir_salidas, ".\n",
+         "Lo genera ", de, ": hay que correrlo antes.")
   }
   readRDS(ruta)
 }
 
-simce_dist         <- leer_de_01a("simce_dist.rds")
-simce_colegio      <- leer_de_01a("simce_colegio.rds")
-contexto_colegio   <- leer_de_01a("contexto_colegio.rds")
-nivel_historico    <- leer_de_01a("nivel_historico.rds")
-sd_historica       <- leer_de_01a("sd_historica.rds")
-respaldo_historico <- leer_de_01a("respaldo_historico.rds")
-conf_simce         <- leer_de_01a("conf_simce.rds")
-descriptivos_simce <- leer_de_01a("descriptivos_simce.rds")
-anios_horizonte    <- leer_de_01a("anios_horizonte.rds")
+simce <- leer_salida("salida_01a_simce.rds", "01a_insumos_simce.R")
+
+simce_dist         <- simce$simce_dist
+simce_colegio      <- simce$simce_colegio
+contexto_colegio   <- simce$contexto_colegio
+nivel_historico    <- simce$nivel_historico
+sd_historica       <- simce$sd_historica
+respaldo_historico <- simce$respaldo_historico
+conf_simce         <- simce$conf_simce
+descriptivos_simce <- simce$descriptivos
+anios_horizonte    <- simce$anios_horizonte
 
 # Descriptivos del SIMCE que la lista final vuelve a usar tal cual.
 desc_simce_alu  <- descriptivos_simce$desc_simce_alu
@@ -132,19 +126,13 @@ ensayos <- ensayos_santillana0 %>%
   filter(!outlier_iqr, !outlier_isoforest)
 
 ## IRT: habilidad por estudiante y parámetros de ítem ----
-# Los produce 00_irt_calibracion.R. theta está en una escala común entre
+# Los produce 00_calibracion_irt.R. theta está en una escala común entre
 # los ensayos de un mismo año x grado x área (media 0, sd 1 en la cohorte
 # Santillana de ese año), NO entre años.
-ruta_irt_theta <- dir_salidas %>% file.path("irt_theta.rds")
-ruta_irt_items <- dir_salidas %>% file.path("irt_items.rds")
+irt <- leer_salida("salida_00_irt.rds", "00_calibracion_irt.R")
 
-if (!file.exists(ruta_irt_theta) || !file.exists(ruta_irt_items)) {
-  stop("Faltan las salidas de la calibración IRT (", ruta_irt_theta,
-       "). Hay que correr antes 00_irt_calibracion.R.")
-}
-
-irt_theta <- readRDS(ruta_irt_theta)
-irt_items <- readRDS(ruta_irt_items)
+irt_theta <- irt$theta
+irt_items <- irt$items
 
 # --- Puntaje verdadero: theta traducido a porcentaje de logro ------------
 # La curva característica del test evaluada en theta: qué porcentaje del
@@ -262,7 +250,7 @@ if (any(!is.na(deriva_banco$salto) & abs(deriva_banco$salto) > 3)) {
           as.data.frame())
 }
 
-# ---- 2. Limpieza de ensayos -----------------------------------------
+# ---- 3. Limpieza de ensayos -----------------------------------------
 ensayos_limpio <- ensayos %>%
   mutate(
     porcentaje_logro = pmin(porcentaje_logro, 100),
@@ -301,7 +289,7 @@ ensayos_dedup <- ensayos_limpio %>%
   summarise(porcentaje_logro = mean(porcentaje_logro), .groups = "drop")
 
 
-# ---- 3. Resumen simple por estudiante --------------------------------
+# ---- 4. Resumen simple por estudiante --------------------------------
 # UNA medida por estudiante: `mean_logro`, el puntaje verdadero — qué
 # porcentaje del banco COMPLETO de ítems del año contestaría bien según su
 # theta. Escala 0-100, y no depende de qué ensayos le tocaron.
@@ -331,188 +319,15 @@ resumen_simple <- ensayos_dedup %>%
 cat("\nEstudiantes sin theta que conservan su logro observado:",
     sum(is.na(resumen_simple$theta)), "de", nrow(resumen_simple), "\n")
 
-# ---- 4. ÍNDICE INDIVIDUAL ENCOGIDO POR CONFIABILIDAD ------------------
-# Es la base del ordenamiento de los estudiantes dentro de su colegio.
-#
-# EL PROBLEMA. No todos los estudiantes están medidos con la misma
-# precisión: el 15-22% rinde UN solo ensayo. Tratar su theta como si fuera
-# tan bueno como el de quien rindió seis mete ruido en el ranking interno
-# del colegio, que es justamente lo que la predicción individual usa.
-#
-# CÓMO. Para el estudiante i del colegio c, su theta centrado en el
-# promedio de su colegio se descompone en posición verdadera más error:
-#
-#     x_i = t_i + e_i,   Var(t) = tau^2,   Var(e_i) = se_theta_i^2
-#
-# donde tau^2 es la varianza VERDADERA entre estudiantes del mismo colegio
-# —la observada menos el ruido de medición— y `se_theta` lo entrega la
-# calibración por estudiante. De ahí su confiabilidad individual y el
-# estimador encogido:
-#
-#     rel_i  = tau^2 / (tau^2 + se_theta_i^2)
-#     indice = rel_i * (x_i - media_colegio) / tau
-#
-# que es el BLUP univariado: cada alumno se acerca al promedio de su
-# colegio en proporción a cuánto de su medición es ruido. Un estudiante
-# con seis ensayos casi no se mueve; uno con un solo ensayo sí.
-#
-# ESCALA. El índice queda en unidades de desviación VERDADERA dentro del
-# colegio, así que su sd es sqrt(rel) < 1, no 1. Es deliberado: así el
-# encogimiento de un estudiante mal medido sobrevive hasta la predicción
-# final en vez de perderse al re-estandarizar.
-#
-# ALCANCE REAL, para no atribuirle más de lo que hace: el ordenamiento que
-# produce es casi idéntico al de rankear por theta a secas (Spearman
-# dentro del colegio: mediana 0.995-0.998, p10 0.966-0.990). Como la
-# predicción individual consume sólo el RANGO (`pct_ensayo`), el
-# encogimiento importa para interpretar el índice y para el diagnóstico de
-# confiabilidad, no para mover la predicción.
-
-cat("\nConstruyendo índice individual encogido (secc. 4)...\n")
-
-construir_indice <- function(est_entrada) {
-
-  # --- tau^2 verdadera entre estudiantes del mismo colegio --------------
-  # Primero una versión de grupo (respaldo para colegios chicos), después
-  # la propia de cada colegio. La varianza OBSERVADA entre estudiantes
-  # mezcla diferencias reales con ruido de medición; se descuenta el ruido.
-  tau2_grupo <- est_entrada %>%
-    group_by(agno, grado, area, rbd_revisado) %>%
-    filter(n() >= MIN_EST_TAU) %>%
-    mutate(x_c = x_est - mean(x_est)) %>%
-    group_by(agno, grado, area) %>%
-    summarise(
-      var_obs_g = sum(x_c^2) / pmax(n() - n_distinct(rbd_revisado), 1),
-      var_err_g = mean(var_err),
-      tau2_g    = pmax(var_obs_g - var_err_g, PISO_TAU2 * var_obs_g),
-      .groups = "drop"
-    ) %>%
-    select(agno, grado, area, tau2_g)
-
-  est_base <- est_entrada %>%
-    left_join(tau2_grupo, by = c("agno", "grado", "area")) %>%
-    # Último respaldo de tau^2, calculado DENTRO de cada grado x área: si un
-    # grupo entero quedara sin `tau2_g` (ningún colegio con MIN_EST_TAU
-    # estudiantes), se usa la varianza entre todos sus estudiantes. Es peor
-    # estimación —mezcla diferencias entre colegios con diferencias dentro—
-    # pero es finita y del grupo correcto. Usar una varianza global mezclaría
-    # 4b lenguaje con 2m matemática, que están en escalas distintas.
-    group_by(grado, area) %>%
-    mutate(tau2_respaldo = pmax(var(x_est, na.rm = TRUE), 1e-6)) %>%
-    group_by(agno, grado, area, rbd_revisado) %>%
-    mutate(
-      n_est_col = n(),
-      x_c       = x_est - mean(x_est),
-      var_obs_c = var(x_est),               # NA si el colegio tiene 1 estudiante
-      var_err_c = mean(var_err)
-    ) %>%
-    ungroup() %>%
-    mutate(
-      tau2 = if_else(
-        n_est_col >= MIN_EST_TAU & !is.na(var_obs_c),
-        pmax(var_obs_c - var_err_c, PISO_TAU2 * var_obs_c),
-        tau2_g
-      ),
-      # Nunca por debajo del piso del grupo: un colegio cuyo ruido explica
-      # toda su varianza interna quedaría con tau2 = 0 y todos sus
-      # estudiantes encogidos al promedio exacto, borrando el ordenamiento.
-      tau2       = pmax(coalesce(tau2, tau2_g), PISO_TAU2 * coalesce(tau2_g, 0)),
-      tau2       = if_else(is.na(tau2) | tau2 <= 0, tau2_respaldo, tau2),
-      rel_indice = tau2 / (tau2 + var_err),
-      z_bruto    = x_c / sqrt(tau2),
-      # BLUP univariado: la posición bruta, encogida hacia el promedio del
-      # colegio en proporción a cuánto de la medición es ruido.
-      indice_ensayo = rel_indice * z_bruto
-    ) %>%
-    select(-tau2_respaldo)
-
-  stopifnot(
-    "tau2 no finito en la sección 4" = all(is.finite(est_base$tau2)),
-    "rel_indice fuera de [0,1] en la sección 4" =
-      all(est_base$rel_indice >= 0 & est_base$rel_indice <= 1)
-  )
-
-  cat("  Confiabilidad del índice individual, por número de ensayos rendidos:\n")
-  print(
-    est_base %>%
-      filter(agno == max(agno)) %>%
-      group_by(grado, area, k_ensayos) %>%
-      summarise(n = n(),
-                rel_indice = round(mean(rel_indice), 3),
-                .groups = "drop") %>%
-      filter(n >= 50)
-  )
-
-  est_base
-}
-
-# El insumo del índice: theta y su error estándar por estudiante.
-# `se_theta` YA es el error de medición, así que no hace falta estimar una
-# sigma^2 entre ensayos ni dividirla por k. La calibración lo entrega
-# directo y además diferenciado por CUÁLES formas rindió el estudiante, no
-# sólo por cuántas.
-est_entrada <- ensayos_dedup %>%
-  group_by(agno, grado, area, rbd_revisado, id_usuario_curso) %>%
-  summarise(k_ensayos = n(), .groups = "drop") %>%
-  inner_join(
-    irt_theta %>% select(agno, grado, area, id_usuario_curso, theta, se_theta,
-                         logro_irt),
-    by = c("agno", "grado", "area", "id_usuario_curso")
-  ) %>%
-  mutate(x_est = theta, var_err = se_theta^2)
-
-cat("\n  Estudiantes con theta sobre el total del ensayo:",
-    sprintf("%.1f%%",
-            100 * nrow(est_entrada) / nrow(distinct(ensayos_dedup, agno, grado,
-                                                    area, id_usuario_curso))), "\n")
-
-est_indice <- construir_indice(est_entrada)
-
 # ---- 5. Features a nivel de estudiante --------------------------------
-# `pct_ensayo` es la posición del estudiante DENTRO de su propio colegio y
-# es la materia prima de la predicción individual de 03: a cada estudiante
-# se le asigna el puntaje que corresponde a su percentil.
-#
-# `z_ensayo` es el mismo índice sin convertir a percentil. No lo consume
-# la predicción, pero se conserva porque es la magnitud interpretable: dice a
-# cuántas desviaciones verdaderas del promedio de su colegio está el
-# estudiante, ya descontado el ruido de medición.
-ind_features <- resumen_simple %>%
-  left_join(
-    est_indice %>%
-      select(agno, grado, area, rbd_revisado, id_usuario_curso,
-             indice_ensayo, rel_indice, z_bruto),
-    by = c("agno", "grado", "area", "rbd_revisado", "id_usuario_curso")
-  )
+# `ind_features` es una fila por estudiante x año x grado x área, con su
+# medida del ensayo (`mean_logro`) y su theta. La POSICIÓN dentro del
+# colegio —el índice encogido y su percentil— NO se calcula acá: es el
+# tercer componente del modelo y vive en 02c_estimacion_posicion.R.
+ind_features <- resumen_simple
 
-# Los estudiantes sin theta no tienen índice: quedan fuera del ordenamiento
-# interno pero se conservan en la base (su colegio los necesita para el
-# promedio). Se les asigna la posición central, que es el supuesto neutro.
-n_sin_indice <- sum(is.na(ind_features$indice_ensayo))
-if (n_sin_indice > 0) {
-  cat("\nEstudiantes sin índice (sin theta), al centro de su colegio:",
-      n_sin_indice, "de", nrow(ind_features), "\n")
-}
 
-ind_features <- ind_features %>%
-  mutate(indice_ensayo = coalesce(indice_ensayo, 0),
-         rel_indice    = coalesce(rel_indice, 0)) %>%
-  group_by(agno, grado, area, rbd_revisado) %>%
-  mutate(
-    n_est_colegio = n(),
-    # percentil dentro del colegio, con corrección (rank - 0.5)/n para
-    # que ningún estudiante quede en 0 o 1 exactos.
-    pct_ensayo = (rank(indice_ensayo, ties.method = "average") - 0.5) / n(),
-    # Posición dentro del colegio. NO se re-estandariza a sd 1:
-    # `indice_ensayo` ya viene en unidades de desviación verdadera, así que
-    # su sd dentro del colegio es sqrt(rel) < 1 y el encogimiento por
-    # confiabilidad sobrevive. Re-estandarizar acá lo borraría.
-    # Con menos de 3 estudiantes el centrado no significa nada: 0.
-    z_ensayo = if (n() >= 3) indice_ensayo else 0
-  ) %>%
-  ungroup()
-
-# ---- 5b. Features a nivel de colegio ----------------------------------
+# ---- 6. Features a nivel de colegio ----------------------------------
 # Tres features del ensayo por colegio: su NIVEL (`mean_logro`) y dos de
 # DISPERSIÓN (`sd_entre_estud` e `iqr_logro_ensayo`, este último algo más
 # robusto frente a colegios con outliers). Las de dispersión son
@@ -534,7 +349,7 @@ school_features <- ind_features %>%
     iqr_logro_ensayo   = quantile(mean_logro, 0.90, names = FALSE) -
                          quantile(mean_logro, 0.10, names = FALSE),
 
-    # Para el encogimiento en escala theta (secc. 5b-bis): el promedio de
+    # Para el encogimiento en escala theta (secc. 6b): el promedio de
     # habilidad del colegio y la dispersión entre sus alumnos, que son los
     # análogos exactos de `mean_logro` y `sd_entre_estud` pero en
     # unidades de theta. Con estas dos, 5b-bis reusa `encoger_nivel()` tal
@@ -561,7 +376,7 @@ school_features <- ind_features %>%
     mean_theta = if_else(is.nan(mean_theta), NA_real_, mean_theta)
   )
 
-# ---- 5b-bis. Encogimiento de mean_logro por confiabilidad -------------
+# ---- 6b. Encogimiento de mean_logro por confiabilidad -------------
 # Reemplaza a `n_evals_prom` en el modelo de 02. El razonamiento es el
 # mismo del índice individual, un nivel más arriba: el `mean_logro` de un
 # colegio es una ESTIMACIÓN de su nivel verdadero en el ensayo, y su
@@ -600,7 +415,7 @@ school_features <- ind_features %>%
 # mejore el MAE — en la prueba out-of-time queda entre neutro y +0.25
 # puntos peor. Se justifica por corrección y por reemplazar un término
 # ininterpretable, no por precisión. Si se quiere volver atrás, basta
-# usar `mean_logro` en 02 en vez de `mean_logro_enc`.
+# usar `mean_logro` en 02a en vez de `mean_logro_enc`.
 #
 # No hay filtración temporal: todo esto se calcula con los ensayos del
 # mismo año, que están disponibles al momento de predecir. No usa SIMCE.
@@ -650,7 +465,7 @@ encoger_nivel <- function(d, col_media, col_sd, out_enc, out_conf, out_var_err,
 # grado x área, la escala natural para este shrinkage lineal— y sólo
 # entonces traducir el resultado a puntos de logro con la misma
 # `curva_verdadera()` de la sección 1. Así la salida queda en la escala
-# única (0-100) que consumen 02, 02b y 03, pero el encogimiento en sí
+# única (0-100) que consumen 02a, 02b y 03, pero el encogimiento en sí
 # ocurre donde el supuesto de linealidad es correcto.
 #
 # Lo que NO cambia es la definición del error. `encoger_nivel()` se aplica
@@ -692,7 +507,7 @@ school_features <- school_features %>%
     conf_mean_logro = coalesce(conf_mean_logro, 1)
   )
 
-# ---- 5b-ter. Nivel del ensayo CENTRADO DENTRO DEL AÑO -----------------
+# ---- 6c. Nivel del ensayo CENTRADO DENTRO DEL AÑO -----------------
 # El problema que resuelve: el logro en los ensayos sube todos los años y
 # el SIMCE no lo sigue. En el panel de colegios con SIMCE observado el
 # logro IRT subió de 2023 a 2025 en los cuatro grupos, mientras el SIMCE
@@ -741,7 +556,7 @@ print(
               .groups = "drop")
 )
 
-# ---- 6. Pegar el histórico y el contexto que calculó 01a --------------
+# ---- 7. Pegar el histórico y el contexto que calculó 01a --------------
 # 01a los calculó para todo el país y para un horizonte de años. Acá sólo
 # se seleccionan los que corresponden a cada colegio con ensayo.
 anios_con_ensayo <- sort(unique(school_features$agno))
@@ -806,32 +621,13 @@ cat("Colegios sin historia previa (reciben el prior de su contexto):",
 cat("Colegios sin contexto conocido (reciben expectativa 0):",
     sum(school_features$sin_contexto), "\n")
 
-# ---- 7. Confiabilidades (diagnóstico) --------------------------------
-# Cuánto puede, como máximo, correlacionar el ensayo con el SIMCE a nivel
-# individual: la correlación observable entre dos mediciones está acotada
-# por sus confiabilidades. La del SIMCE la calculó 01a; acá se agrega la
-# del índice del ensayo. Ningún script aguas abajo lee esta tabla para
-# predecir.
-conf_indice <- est_indice %>%
-  group_by(grado, area) %>%
-  summarise(
-    conf_indice     = mean(rel_indice, na.rm = TRUE),
-    conf_indice_p10 = quantile(rel_indice, 0.10, na.rm = TRUE, names = FALSE),
-    k_medio         = mean(k_ensayos),
-    .groups = "drop"
-  )
+# ---- 8. Confiabilidad del SIMCE (se completa en 02c) -----------------
+# La confiabilidad del índice individual la calcula 02c, que es donde se
+# estima ese índice. Acá sólo viaja la del SIMCE, que viene de 01a, para
+# que quede junto al resto de los insumos.
+confiabilidades <- conf_simce %>% select(grado, area, conf_simce)
 
-confiabilidades <- conf_simce %>%
-  select(grado, area, conf_simce) %>%
-  left_join(conf_indice, by = c("grado", "area"))
-
-cat("\nConfiabilidades estimadas (diagnóstico):\n")
-print(confiabilidades %>% mutate(across(where(is.numeric), ~round(.x, 3))))
-cat("\n  conf_indice es la confiabilidad media del índice individual;\n",
-    " conf_indice_p10 la del decil peor medido. k_medio es cuántos ensayos\n",
-    " rinde en promedio un estudiante.\n")
-
-# ---- 8. Cruce con el SIMCE del MISMO año (para entrenar) -------------
+# ---- 9. Cruce con el SIMCE del MISMO año (para entrenar) -------------
 # Dos targets: el promedio (modelo de 02) y la sd interna (modelo de 02b).
 # Los años sin SIMCE —una ronda nueva— quedan fuera por el inner_join, que
 # es lo correcto: no hay con qué entrenar sobre ellos.
@@ -863,7 +659,7 @@ print(
     pivot_wider(names_from = gse_etiqueta, values_from = n, values_fill = 0)
 )
 
-# ---- 8. Descriptivos para la presentación ------------------------------
+# ---- 10. Descriptivos para la presentación ------------------------------
 # Los que dependen del SIMCE los calculó 01a; acá se agregan los del
 # ensayo y se arma la lista final que consume la presentación.
 desc_ensayos <- ensayos_dedup %>%
@@ -1004,13 +800,18 @@ descriptivos <- list(
   confiabilidades      = confiabilidades
 )
 
-# ---- 9. Guardar --------------------------------------------------------
-saveRDS(descriptivos,      dir_salidas %>% file.path("descriptivos.rds"))
-saveRDS(ind_features,      dir_salidas %>% file.path("ind_features.rds"))
-saveRDS(school_features,   dir_salidas %>% file.path("school_features.rds"))
-saveRDS(school_model_data, dir_salidas %>% file.path("school_model_data.rds"))
-saveRDS(confiabilidades,   dir_salidas %>% file.path("confiabilidades.rds"))
+# ---- 11. Guardar --------------------------------------------------------
+salida_ensayo <- list(
+  ind_features      = ind_features,      # 1 fila por estudiante
+  school_features   = school_features,   # 1 fila por colegio
+  school_model_data = school_model_data, # + promedio_simce y sd_simce
+  confiabilidades   = confiabilidades,   # diagnóstico
+  descriptivos      = descriptivos       # tablas para la presentación
+)
 
-cat("\nListo. Insumos del ensayo guardados en", dir_salidas, "(*.rds)\n")
-cat("Siguiente paso: 03_prediccion_nueva_ronda.R para predecir la ronda,\n")
-cat("o 02_modelo_escolar.R si llegó SIMCE nuevo y hay que re-estimar.\n")
+saveRDS(salida_ensayo, dir_salidas %>% file.path("salida_01b_ensayo.rds"))
+
+cat("\nListo. Salida en", dir_salidas %>% file.path("salida_01b_ensayo.rds"), "\n")
+cat("Es una lista con:", paste(names(salida_ensayo), collapse = ", "), "\n")
+cat("Siguiente paso: 03_prediccion.R para predecir la ronda,\n")
+cat("o 02a_estimacion_nivel.R si llegó SIMCE nuevo y hay que re-estimar.\n")

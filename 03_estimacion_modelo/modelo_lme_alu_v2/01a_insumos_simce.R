@@ -29,11 +29,7 @@
 # POR QUÉ EL HISTÓRICO SE CALCULA PARA TODO EL PAÍS
 # -------------------------------------------------------------
 # El efecto histórico de un colegio se estima con un modelo sobre el
-# universo NACIONAL, pero antes se evaluaba sólo para los colegios que
-# tenían ensayo — y ésa era la única razón por la que esta parte dependía
-# de los ensayos. Acá se evalúa para TODOS los colegios del panel
-# nacional (~9.400 en vez de ~200, diferencia despreciable en cómputo) y
-# 01b se queda con los que necesita mediante un join.
+# universo NACIONAL.
 #
 # El contexto del colegio (GSE, dependencia, ruralidad) entra como PRIOR
 # del efecto histórico, no como predictor suelto: ver el encabezado de 01b
@@ -47,21 +43,22 @@
 # siempre el último registro ESTRICTAMENTE anterior.
 #
 # -------------------------------------------------------------
-# SALIDAS (en <ruta_outputs>/modelo_lme_alu_v2/)
-#   - simce_alumno.rds            SIMCE individual en formato largo
-#   - simce_dist.rds              media, sd y cuantiles por colegio
-#   - simce_colegio.rds           promedio_simce por colegio (target de 02)
-#   - limites_simce.rds           rango plausible de puntajes por grupo
-#   - contexto_rezagado.rds       contexto del colegio, por año objetivo
-#   - contexto_colegio.rds        idem con etiquetas legibles e histórico
-#   - nivel_historico.rds         efecto persistente de NIVEL, todo el país
-#   - sd_historica.rds            efecto persistente de DISPERSIÓN, idem
-#   - respaldo_historico.rds      valores por defecto para colegios sin
-#                                 contexto rezagado
-#   - forma_z.rds                 plantilla de forma de la distribución
-#   - cortes_tercil.rds           cortes para asignar tercil de nivel
-#   - conf_simce.rds              confiabilidad del SIMCE (diagnóstico)
-#   - descriptivos_simce.rds      descriptivos que sólo usan SIMCE
+# SALIDA: un único archivo `salida_01a_simce.rds` con una lista de:
+#
+#   $simce_alumno        SIMCE individual en formato largo
+#   $simce_dist          media, sd y cuantiles por colegio
+#   $simce_colegio       promedio_simce por colegio (target de 02)
+#   $limites_simce       rango plausible de puntajes por grupo
+#   $contexto_rezagado   contexto del colegio, por año objetivo
+#   $contexto_colegio    idem con etiquetas legibles e histórico
+#   $nivel_historico     efecto persistente de NIVEL, todo el país
+#   $sd_historica        efecto persistente de DISPERSIÓN, idem
+#   $respaldo_historico  valores por defecto para colegios sin contexto
+#   $forma_z             plantilla de forma de la distribución interna
+#   $cortes_tercil       cortes para asignar tercil de nivel
+#   $conf_simce          confiabilidad del SIMCE (diagnóstico)
+#   $descriptivos        descriptivos que sólo usan SIMCE
+#   $anios_horizonte     años objetivo precalculados
 # =============================================================
 
 library(tidyverse)
@@ -162,9 +159,6 @@ simce_alumno <- simce_alu0 %>%
                names_to = c('.value', 'area')
                ) %>%
   mutate(area = ifelse(area == 'mate', 'matematica', 'lenguaje')) %>%
-  # No es cosmético: `simce_dist` contaría esos alumnos en `n_alu_simce`,
-  # y las secciones que llaman a density() o quantile() sin na.rm abortan
-  # si quedan NA.
   filter(!is.na(ptje))
 
 rm(simce_alu0); gc()
@@ -173,7 +167,7 @@ cat("SIMCE individual cargado:", nrow(simce_alumno), "puntajes alumno x área\n"
 
 # ---- 3. Distribución interna observada por colegio -------------------
 # Esta tabla es la "verdad" contra la que se validan las predicciones
-# individuales en 04_validacion_individual.R.
+# individuales en 04_validacion.R.
 simce_dist <- simce_alumno %>%
   group_by(agno, grado, area, rbd_revisado) %>%
   summarise(
@@ -627,7 +621,7 @@ contexto_colegio <- contexto_rezagado %>%
                                     contexto_sd, n_anios_sd_hist),
             by = c("agno", "grado", "area", "rbd_revisado"))
 
-# Promedio SIMCE por colegio: es el target del modelo de 02 y lo que 01b
+# Promedio SIMCE por colegio: es el target del modelo de 02a y lo que 01b
 # necesita para armar `school_model_data`.
 simce_colegio <- simce_limpio %>%
   select(agno, grado, area, rbd_revisado, promedio_simce)
@@ -785,21 +779,27 @@ descriptivos_simce <- list(
 )
 
 # ---- 13. Guardar -----------------------------------------------------
-saveRDS(simce_alumno,        dir_salidas %>% file.path("simce_alumno.rds"))
-saveRDS(simce_dist,          dir_salidas %>% file.path("simce_dist.rds"))
-saveRDS(simce_colegio,       dir_salidas %>% file.path("simce_colegio.rds"))
-saveRDS(limites_simce,       dir_salidas %>% file.path("limites_simce.rds"))
-saveRDS(contexto_rezagado,   dir_salidas %>% file.path("contexto_rezagado.rds"))
-saveRDS(contexto_colegio,    dir_salidas %>% file.path("contexto_colegio.rds"))
-saveRDS(nivel_historico,     dir_salidas %>% file.path("nivel_historico.rds"))
-saveRDS(sd_historica,        dir_salidas %>% file.path("sd_historica.rds"))
-saveRDS(respaldo_historico,  dir_salidas %>% file.path("respaldo_historico.rds"))
-saveRDS(forma_z,             dir_salidas %>% file.path("forma_z.rds"))
-saveRDS(cortes_tercil,       dir_salidas %>% file.path("cortes_tercil.rds"))
-saveRDS(conf_simce,          dir_salidas %>% file.path("conf_simce.rds"))
-saveRDS(descriptivos_simce,  dir_salidas %>% file.path("descriptivos_simce.rds"))
-saveRDS(anios_horizonte,     dir_salidas %>% file.path("anios_horizonte.rds"))
+# Todo en una sola lista. Ver el encabezado para qué es cada elemento.
+salida_simce <- list(
+  simce_alumno       = simce_alumno,
+  simce_dist         = simce_dist,
+  simce_colegio      = simce_colegio,
+  limites_simce      = limites_simce,
+  contexto_rezagado  = contexto_rezagado,
+  contexto_colegio   = contexto_colegio,
+  nivel_historico    = nivel_historico,
+  sd_historica       = sd_historica,
+  respaldo_historico = respaldo_historico,
+  forma_z            = forma_z,
+  cortes_tercil      = cortes_tercil,
+  conf_simce         = conf_simce,
+  descriptivos       = descriptivos_simce,
+  anios_horizonte    = anios_horizonte
+)
 
-cat("\nListo. Insumos de SIMCE guardados en", dir_salidas, "\n")
+saveRDS(salida_simce, dir_salidas %>% file.path("salida_01a_simce.rds"))
+
+cat("\nListo. Salida en", dir_salidas %>% file.path("salida_01a_simce.rds"), "\n")
+cat("Es una lista con:", paste(names(salida_simce), collapse = ", "), "\n")
 cat("Años objetivo cubiertos:", paste(range(anios_horizonte), collapse = " a "), "\n")
 cat("Siguiente paso: 01b_insumos_ensayo.R\n")

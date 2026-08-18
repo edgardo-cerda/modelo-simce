@@ -159,20 +159,36 @@ interactivo <- function(p, alto = ALTO_GRAFICO, leyenda = TRUE) {
 # ---- 1. Insumos ---------------------------------------------------
 cat("Leyendo insumos desde", dir_salidas, "\n")
 
-descriptivos     <- leer_rds("descriptivos.rds")          # 01
-school_model     <- leer_rds("school_model_data.rds")     # 01
-forma_z          <- leer_rds("forma_z.rds")               # 01
-diag_nivel       <- leer_rds("diag_nivel.rds")            # 02
-diag_dispersion  <- leer_rds("diag_dispersion.rds")       # 02b
-met_nivel        <- leer_csv("metricas_validacion.csv")   # 02
-met_dispersion   <- leer_csv("metricas_dispersion.csv")   # 02b
-coherencia       <- leer_csv("chequeo_coherencia.csv")    # 03
-val_dist         <- leer_csv("validacion_distribucional.csv")  # 04
-val_estrato      <- leer_csv("validacion_por_estrato.csv")     # 04
-val_colegio      <- leer_rds("validacion_por_colegio.rds")     # 04
-dens_validacion  <- leer_rds("dens_validacion.rds")            # 04
-anio_test        <- leer_rds("anio_test.rds")                  # 02
-niveles_logro    <- leer_rds("niveles_logro.rds")              # 04
+# Cada script del pipeline guarda todo lo suyo en una sola lista. `elem()`
+# saca un elemento y devuelve NULL si falta el archivo o el elemento, que
+# es lo que `construir()` espera para omitir una figura sin caerse.
+elem <- function(archivo, nombre) {
+  x <- leer_rds(archivo)
+  if (is.null(x)) return(NULL)
+  x[[nombre]]
+}
+
+salida_01a  <- leer_rds("salida_01a_simce.rds")
+salida_01b  <- leer_rds("salida_01b_ensayo.rds")
+salida_02   <- leer_rds("salida_02a_nivel.rds")
+salida_02b  <- leer_rds("salida_02b_dispersion.rds")
+salida_03   <- leer_rds("salida_03_prediccion.rds")
+salida_04   <- leer_rds("salida_04_validacion.rds")
+
+descriptivos     <- salida_01b$descriptivos
+school_model     <- salida_01b$school_model_data
+forma_z          <- salida_01a$forma_z
+diag_nivel       <- salida_02$diagnostico
+diag_dispersion  <- salida_02b$diagnostico
+met_nivel        <- salida_02$metricas
+met_dispersion   <- salida_02b$metricas
+coherencia       <- salida_03$chequeo
+val_dist         <- salida_04$distribucional
+val_estrato      <- salida_04$por_estrato
+val_colegio      <- salida_04$por_colegio
+dens_validacion  <- salida_04$densidades
+anio_test        <- salida_02$anio_test
+niveles_logro    <- salida_04$niveles_logro
 
 anio_test <- if (is.null(anio_test)) NA else anio_test
 
@@ -510,7 +526,7 @@ tablas$t_comparacion_escenarios <- construir("t_comparacion_escenarios",
 # qué porcentaje de estudiantes queda bajo el corte de Insuficiente
 # según cada forma de estimar el puntaje, y cuánto se aleja del real.
 #
-# ¡OJO! Los cortes están duplicados de 04_validacion_individual.R, que es
+# ¡OJO! Los cortes están duplicados de 04_validacion.R, que es
 # la fuente de verdad (son los oficiales de los Estándares de Aprendizaje
 # y NO se estiman de los datos). Si se corrigen allá, hay que corregirlos
 # acá también.

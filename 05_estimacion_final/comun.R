@@ -1,15 +1,56 @@
 # =============================================================
 # comun.R
 # -------------------------------------------------------------
-# Funciones que comparten el validador, el driver y el informe. No se
-# ejecuta solo: lo cargan los otros con source().
+# Funciones que comparten el validador y el master. No se ejecuta solo:
+# lo cargan los otros con source().
 # =============================================================
 
-# Raíz del proyecto, deducida de la ubicación de esta carpeta. Los scripts
-# del modelo leen "config.yml" con ruta RELATIVA, así que hay que
-# ejecutarlos con el directorio de trabajo puesto acá.
-raiz_proyecto <- function(dir_produccion) {
-  normalizePath(file.path(dir_produccion, "..", "..", ".."), mustWork = TRUE)
+# Raíz del proyecto. Los scripts del modelo leen "config.yml" con ruta
+# RELATIVA, así que hay que ejecutarlos con el directorio de trabajo
+# puesto ahí.
+#
+# Se busca subiendo carpetas hasta encontrar config.yml, en vez de contar
+# niveles. Contar niveles ata este script a la estructura del repositorio y
+# se rompe en silencio apenas alguien mueve o renombra una carpeta, que es
+# exactamente lo que pasó cuando la carpeta de producción se sacó de
+# 03_.../modelo_lme_alu_v2/ y quedó en la raíz.
+raiz_proyecto <- function(dir_inicio) {
+  d <- normalizePath(dir_inicio, mustWork = TRUE)
+  for (i in 1:8) {
+    if (file.exists(file.path(d, "config.yml"))) return(d)
+    padre <- normalizePath(file.path(d, ".."), mustWork = FALSE)
+    if (identical(padre, d)) break
+    d <- padre
+  }
+  stop("No se encontró config.yml subiendo desde ", dir_inicio, ".\n",
+       "Esta carpeta tiene que estar dentro del proyecto modelo-simce.")
+}
+
+# Carpeta con los scripts del modelo. Se identifica por su contenido —los
+# dos scripts que la ruta de predicción necesita— y no por su nombre, por
+# el mismo motivo de arriba. Se busca hasta dos niveles bajo la raíz.
+carpeta_modelo <- function(dir_raiz) {
+  nivel1 <- list.dirs(dir_raiz, recursive = FALSE)
+  nivel1 <- nivel1[!grepl("[/\\\\]\\.", nivel1)]      # ignorar .git, .Rproj.user
+  candidatos <- c(nivel1, unlist(lapply(nivel1, list.dirs, recursive = FALSE)))
+
+  tiene <- function(d) {
+    all(file.exists(file.path(d, c("00_calibracion_irt.R",
+                                   "01b_insumos_ensayo.R",
+                                   "03_prediccion.R"))))
+  }
+  ok <- candidatos[vapply(candidatos, tiene, logical(1))]
+
+  if (length(ok) == 0) {
+    stop("No se encontraron los scripts del modelo dentro de ", dir_raiz, ".\n",
+         "Se buscó una carpeta con 00_calibracion_irt.R, 01b_insumos_ensayo.R\n",
+         "y 03_prediccion.R, hasta dos niveles bajo la raíz.")
+  }
+  if (length(ok) > 1) {
+    warning("Hay más de una carpeta con los scripts del modelo:\n  ",
+            paste(ok, collapse = "\n  "), "\nSe usa la primera.")
+  }
+  normalizePath(ok[1])
 }
 
 # --- rutas.txt --------------------------------------------------------
@@ -30,7 +71,7 @@ leer_rutas <- function(archivo) {
 # --- config.yml -------------------------------------------------------
 # Los scripts del modelo leen sus rutas de config.yml, indexado por nombre
 # de usuario de Windows. En vez de pedirle al equipo que edite un YAML, el
-# driver sincroniza ese archivo a partir de rutas.txt. Se edita por líneas
+# master sincroniza ese archivo a partir de rutas.txt. Se edita por líneas
 # para no reformatear ni perder los perfiles de otras personas.
 sincronizar_config <- function(ruta_config, usuario, rutas) {
 
@@ -68,8 +109,8 @@ sincronizar_config <- function(ruta_config, usuario, rutas) {
 
 # --- Nombres de archivo de ensayo -------------------------------------
 # El nombre del archivo ES la metadata. Esta función implementa el mismo
-# contrato que usa 00_irt_calibracion.R, y se usa para validarlo antes de
-# correr nada. Ver CONTRATO_DE_DATOS.md.
+# formato que espera 00_calibracion_irt.R, y se usa para validarlo antes de
+# correr nada. Ver DATOS_REQUERIDOS.md.
 parsear_nombre_ensayo <- function(nombres) {
   data.frame(
     archivo = nombres,

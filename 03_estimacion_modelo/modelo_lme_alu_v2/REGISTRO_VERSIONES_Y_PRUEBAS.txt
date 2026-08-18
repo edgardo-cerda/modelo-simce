@@ -73,6 +73,12 @@ v13    01 se parte en 01a (insumos de SIMCE) y 01b (insumos del ensayo).
 v14    Calibración incremental en 00 y empaquetado de la ruta de
        predicción para un equipo que no usa R. Ver sección 6c.
 
+v15    Los scripts se reorganizan según los tres componentes que estima el
+       modelo: nivel, dispersión y posición. Ver sección 6d.
+
+v16    Se elimina el informe de calidad HTML. La revisión previa a entregar
+       pasa a hacerse sobre log_corrida.txt.
+
 
 ===============================================================================
 2. PRUEBAS SOBRE LA ESPECIFICACIÓN DEL MODELO DE NIVEL
@@ -511,20 +517,19 @@ irt_theta).
 En los tres casos irt_theta (100.233 filas) e irt_items (2.449 filas) salen
 IDÉNTICOS a la calibración completa de referencia.
 
-EMPAQUETADO (carpeta produccion/)
----------------------------------
+EMPAQUETADO (carpeta 05_estimacion_final/)
+------------------------------------------
 Para que la ruta de predicción la pueda correr un equipo que no usa R:
 
     PREDECIR.bat            punto de entrada, doble clic
     CHEQUEAR.bat            sólo valida insumos, sin calcular
     rutas.txt               las 3 rutas de datos, lo único editable
     00_validar_insumos.R    11 chequeos con veredicto
-    99_informe_calidad.R    informe HTML con semáforo
-    driver_prediccion.R     orquesta 00 -> 01b -> 03 y arma la entrega
+    master_prediccion.R     orquesta 00 -> 01b -> 02c -> 03 y arma la entrega
     comun.R                 funciones compartidas
     instalar_dependencias.R una sola vez, binarios de Posit
     COMO_CORRER.md          guía de una página
-    CONTRATO_DE_DATOS.md    nombres de archivo, hojas y columnas
+    DATOS_REQUERIDOS.md     nombres de archivo, hojas y columnas
 
 DOS FALLAS QUE ENCONTRÓ EL PROPIO VALIDADOR AL PROBARLO, y que ilustran
 para qué sirve:
@@ -534,7 +539,7 @@ para qué sirve:
     de entrenamiento porque no tiene ensayos, no porque falte procesarlo.
     Ahora sólo cuenta años posteriores al último entrenado.
 
-El driver sincroniza config.yml desde rutas.txt para el usuario de Windows
+El master sincroniza config.yml desde rutas.txt para el usuario de Windows
 actual, editando por líneas para no pisar los perfiles de otras personas.
 Así los scripts del modelo siguen sin modificarse.
 
@@ -542,11 +547,81 @@ CORRIDA COMPLETA MEDIDA: 7.7 minutos (00 7.1 min, 01b 12 s, 03 3 s). Con la
 calibración incremental, una ronda que sólo agrega un año nuevo baja a
 menos de un minuto.
 
-LO QUE NO RESUELVE. El informe da un veredicto, pero los juicios de fondo
-siguen siendo humanos: la deriva entre años (sección 2.5) y la elección
-entre la especificación en niveles y la centrada (sección 2.4) no se
-automatizan. Sobre los datos actuales el veredicto sale AMARILLO, que es lo
-correcto: marca esos dos problemas abiertos.
+HUBO UN INFORME HTML CON SEMÁFORO (99_informe_calidad.R) que resumía la
+corrida y daba un veredicto de si publicar. Se eliminó en la v16. Los
+diagnósticos que mostraba siguen existiendo donde se calculan y quedan en
+log_corrida.txt: la comparabilidad del banco de ítems la imprime 01b, la
+coherencia del reparto la imprime 03, y las métricas de precisión están en
+las salidas de 02a, 02b y 04.
+
+LO QUE NO SE AUTOMATIZA, con informe o sin él: la deriva entre años
+(sección 2.5) y la elección entre la especificación en niveles y la
+centrada (sección 2.4) son juicios humanos.
+
+
+===============================================================================
+6d. LOS TRES COMPONENTES, UN SCRIPT CADA UNO (v15)
+===============================================================================
+
+El modelo estima tres cosas y las ensambla:
+
+    puntaje = NIVEL(colegio) + DISPERSIÓN(colegio) x POSICIÓN(estudiante)
+
+Hasta la v14 el nivel y la dispersión tenían un script propio, pero la
+posición estaba repartida: su plantilla de forma en 01a, su índice
+individual dentro de 01b, y sólo se juntaban al aplicarla en 03. Era el
+único componente que no se podía leer completo en ninguna parte.
+
+    00_calibracion_irt.R          calibración de los ensayos
+    01a_insumos_simce.R           insumos que dependen sólo del SIMCE
+    01b_insumos_ensayo.R          insumos que dependen del ensayo del año
+    02a_estimacion_nivel.R        COMPONENTE 1
+    02b_estimacion_dispersion.R   COMPONENTE 2
+    02c_estimacion_posicion.R     COMPONENTE 3  (nuevo)
+    03_prediccion.R               ensambla los tres
+    04_validacion.R               valida
+
+LA TENSIÓN QUE HUBO QUE RESOLVER. Los insumos están partidos por FUENTE
+(01a SIMCE, 01b ensayo) porque eso determina cuándo corre cada uno. Los
+componentes son un eje ortogonal: cada uno tiene una mitad en cada fuente.
+
+    Componente    Parte histórica (01a)      Parte fresca (01b)
+    Nivel         nivel_hist_colegio         mean_logro_enc
+    Dispersión    sd_hist_colegio            sd_entre_estud, iqr
+    Posición      forma_z, cortes_tercil     índice individual
+
+No se puede tener los dos ejes como organización principal de los
+archivos. Quedó el de fuente en los insumos y el de componente en la
+estimación, que es donde importa para entender el modelo.
+
+UNA ASIMETRÍA QUE EL CAMBIO DEJA A LA VISTA, y que es del modelo y no del
+código: 02a y 02b ajustan coeficientes que se reutilizan entre rondas;
+02c no tiene nada que entrenar. El ordenamiento depende de qué alumnos
+rindieron los ensayos del año, así que se recalcula siempre, y la única
+pieza "entrenada" de la posición es la plantilla de forma, que viene de
+01a. Por eso 02c corre en la ruta de predicción y 02a/02b no:
+
+    ronda nueva        00 -> 01b -> 02c -> 03
+    llegó SIMCE nuevo  00 -> 01a -> 01b -> 02a -> 02b -> 02c -> 03 -> 04
+
+Es también la razón de que la posición sea el componente que menos se
+puede validar: su supuesto de fondo —que el ensayo ordena parecido a como
+ordenará el SIMCE— no es comprobable sin vínculo alumno-a-alumno.
+
+VERIFICACIÓN. Se guardaron las salidas previas y se compararon:
+
+    ind_features        97.766 filas   IDÉNTICO (sin las 6 columnas de
+                                       posición, que se fueron a 02c)
+    school_features      1.466 filas   IDÉNTICO
+    school_model_data    1.410 filas   IDÉNTICO
+    posicion            97.766 filas   IDÉNTICO a las columnas que salieron
+    confiabilidades                    IDÉNTICO
+    prediccion$individual 49.717       IDÉNTICO
+    prediccion$colegio       694       IDÉNTICO
+    métricas de 02a, 02b y 04          IDÉNTICAS
+
+PREDECIR.bat corre los 4 pasos en 72 segundos y la presentación reconstruye
+sus 33 figuras.
 
 
 ===============================================================================
